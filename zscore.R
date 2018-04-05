@@ -1,3 +1,8 @@
+#Function to compute z-score of a row
+#Input: counts ~ dataframe of raw values
+#Output: zscore ~dataframe of corresponding z-score
+
+
 zscore <- function(counts) {
 	rownum <- dim(counts)[1]
 	colnum <- dim(counts)[2]
