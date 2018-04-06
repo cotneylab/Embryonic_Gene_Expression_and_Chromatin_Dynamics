@@ -1,5 +1,5 @@
 #Function to compute z-score of a row
-#Input: counts ~ dataframe of raw values
+#Input: counts ~ matrix of raw values
 #Output: zscore ~dataframe of corresponding z-score
 
 
