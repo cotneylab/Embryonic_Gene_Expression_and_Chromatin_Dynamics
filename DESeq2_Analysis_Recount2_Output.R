@@ -50,7 +50,7 @@ for(i in 1:svseq$n.sv) {
 	currentSV<- paste("SV", i, sep="")
 	ddssva[[currentSV]] <- svseq$sv[,i]
 	}
-##Then create text of the new formula
+##Then create text of the new formula (youre going to copy and paste in next step)
 
 form<- "~sample"
 formtemp<- c(rep("SV",svseq$n.sv))
@@ -79,6 +79,8 @@ CS1314<-subset(res,padj<=0.05)
 ## And genes with abs log2Foldchange greater than 1
 CS1314<-CS1314[abs(CS1314$log2FoldChange) >1,]
 
+##Save your most wanted DE genes! 
+write.table(CS1314,file="CS1314_DE.tsv",sep="\t")
 
 
 
