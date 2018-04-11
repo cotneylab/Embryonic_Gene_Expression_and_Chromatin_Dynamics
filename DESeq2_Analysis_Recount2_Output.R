@@ -44,4 +44,29 @@ ddssva<-dds
 ddssva$SV1 <- svseq$sv[,1]
 design(ddssva) <- ~SV1 + sample
 
+## For when SVs are alot:
+
+for(i in 1:svseq$n.sv) {
+	currentSV<- paste("SV", i, sep="")
+	ddssva[[currentSV]] <- svseq$sv[,i]
+	}
+##Then create text of the new formula
+
+form<- "~sample"
+formtemp<- c(rep("SV",svseq$n.sv))
+for(i in 1:svseq$n.sv){
+	form<- paste(formtemp[i], i, sep="+")
+
+## Modify the design to add in your new SVs 
+design(ddssva) <- ~sample + SV1 + SV2 + ...SVn
+
+## Run DESeq2 analysis 
+
+ddssva <- DESeq(ddssva)
+
+
+
+
+
+
 
