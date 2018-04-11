@@ -66,7 +66,18 @@ design(ddssva) <- ~sample + SV1 + SV2 + ...SVn
 
 ddssva <- DESeq(ddssva)
 
+##Getting Results for p value atleast 0.05 
+##res contains ALL genes inputted, but you get a summary of padj <0.05
+res<- results(ddssva,alpha=0.05,contrast=c("sample","CS13","CS14"))
 
+##Print summary of results
+summary(res) 
+
+##Filter results for just the genes you want
+##genes with padj less than 0.05
+CS1314<-subset(res,padj<=0.05)
+## And genes with abs log2Foldchange greater than 1
+CS1314<-CS1314[abs(CS1314$log2FoldChange) >1,]
 
 
 
