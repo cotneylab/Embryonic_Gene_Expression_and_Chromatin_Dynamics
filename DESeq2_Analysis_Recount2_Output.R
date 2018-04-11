@@ -55,7 +55,9 @@ for(i in 1:svseq$n.sv) {
 form<- "~sample"
 formtemp<- c(rep("SV",svseq$n.sv))
 for(i in 1:svseq$n.sv){
-	form<- paste(formtemp[i], i, sep="+")
+	formtemp[i] <- paste(formtemp[i],i,sep='')
+	form<- paste(form, formtemp[i], sep="+")
+	}
 
 ## Modify the design to add in your new SVs 
 design(ddssva) <- ~sample + SV1 + SV2 + ...SVn
