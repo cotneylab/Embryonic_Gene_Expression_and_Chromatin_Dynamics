@@ -68,7 +68,10 @@ ddssva <- DESeq(ddssva)
 
 ##Getting Results for p value atleast 0.05 
 ##res contains ALL genes inputted, but you get a summary of padj <0.05
-res<- results(ddssva,alpha=0.05,contrast=c("sample","CS13","CS14"))
+res<-results(ddssva,alpha=0.05,contrast=c("sample","CS13","CS14"))
+
+##Shrink your log folds 
+res_shr<- lfcShrink(ddssva, contrast=c("sample","CS13","CS14"), res=res)
 
 ##Print summary of results
 summary(res) 
