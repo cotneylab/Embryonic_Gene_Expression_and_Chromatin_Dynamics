@@ -62,7 +62,7 @@ for(i in 1:svseq$n.sv){
 ## Modify the design to add in your new SVs 
 design(ddssva) <- ~sample + SV1 + SV2 + ...SVn
 
-## Run DESeq2 analysis 
+## Run DESeq2 analysis CS
 
 ddssva <- DESeq(ddssva)
 
@@ -70,8 +70,9 @@ ddssva <- DESeq(ddssva)
 ##res contains ALL genes inputted, but you get a summary of padj <0.05
 res<-results(ddssva,alpha=0.05,contrast=c("sample","CS13","CS14"))
 
-##Shrink your log folds 
+##Shrink your log folds* (*optional, some datasets benefit, and some get messed up)
 res_shr<- lfcShrink(ddssva, contrast=c("sample","CS13","CS14"), res=res)
+
 
 ##Print summary of results
 summary(res) 
