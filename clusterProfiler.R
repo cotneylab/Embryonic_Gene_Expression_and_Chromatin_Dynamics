@@ -1,6 +1,7 @@
 ##Tutorial for clusterProfiler package in R 
 
 library(clusterProfiler)
+library(org.Hs.eg.db)
 
 
 ##Convert gene ids to entrez 
