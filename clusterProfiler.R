@@ -9,10 +9,10 @@ library(org.Hs.eg.db)
 #gsub("\\..*","",df$geneID)
 
 ##genes to GO
-cl1_up<-bitr(row.names(cl1), fromType='ENSEMBL', toType='ENTREZID', OrgDb = 'org.Hs.eg.db')
+cl1_up<-mapIds(org.Hs.eg.db,keys=genes2$cl2,column="ENTREZID",keytype="ENSEMBL",multiVals="first")
 
 ##background set of genes 
-uni<-bitr(row.names(all), fromType='ENSEMBL', toType='ENTREZID', OrgDb = 'org.Hs.eg.db')
+uni<-mapIds(org.Hs.eg.db,keys=genes2$cl2,column="ENTREZID",keytype="ENSEMBL",multiVals="first")
 
 
 ##GO over-representation test 
@@ -23,3 +23,6 @@ ego = enrichGO(gene=cl1_up$ENTREZD, universe=uni$ENTREZID,
 	pvalueCutoff =0.01,
 	qvalueCutoff=0.05,
 	readable=TRUE)
+
+#dotplot 
+

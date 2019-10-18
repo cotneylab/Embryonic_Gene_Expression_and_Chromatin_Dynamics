@@ -12,4 +12,4 @@ for (i in dss_filt){
 }
 slices<-c(cout,cin)
 lbls<-c("TSS distal","TSS proximal")
-pie(slices,labels=lbls)
+pie(slices,labels=lbls,main="dat1")

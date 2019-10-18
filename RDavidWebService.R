@@ -12,8 +12,7 @@ library(RDAVIDWebService)
 
 ##Create david object 
 
-david<- DAVIDWebService(email="yankee@uchc.edu",
-	url = "https://david.ncifcrf.gov/webservice/services/DAVIDWebService.DAVIDWebServiceHttpSoap12Endpoint/")
+david<- DAVIDWebService(email="yankee@uchc.edu",url = "https://david.ncifcrf.gov/webservice/services/DAVIDWebService.DAVIDWebServiceHttpSoap12Endpoint/")
 
 
 
