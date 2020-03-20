@@ -1,0 +1,11 @@
+We were given bedgraph prediction track from the authors of: doi: 10.1093/nar/gkv1144 Emerge: a flexible modelling framework... Nucleic Acids Res 2016 van Duijvenboden et al. 
+Peaks were called on this bedgraph. 
+
+get_pred_perpeak.R
+This script sums all the weights of the bedgraph segments that the peaks spanned.
+
+Emerge_ROC_calc.R
+This script sums all the weights of the peaks that the true positive and true negative segments spanned.
+It outputs a dataframe to be used in the ROC curves. 
+
+
