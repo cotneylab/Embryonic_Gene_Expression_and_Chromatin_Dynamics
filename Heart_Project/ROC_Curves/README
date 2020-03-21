@@ -1,0 +1,11 @@
+These scripts were used to make the ROC curves from the ChromHMM posterior probability files.
+
+Annotate_ChromHMM_Bins.R 
+Creates bed files for the 200bp windows for each chromosome
+
+ROC_calc_main.R
+Loops through all samples and initializes variables and saves data to output.
+Calls ROC_calc.R
+
+ROC_calc.R
+Calculates the mean of the sum of the posterior probabilities for  states 9, 10, 13, 14,15 and 18  for all true positive or true negative segments.
