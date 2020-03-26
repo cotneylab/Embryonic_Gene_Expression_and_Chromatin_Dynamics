@@ -1,0 +1,27 @@
+Description: README for files used for the Tissue Specificity (GINI) analysis of Human Embryonic Heart RNA-seq data
+For extra details see: Lab Guru Human Embryonic Heart Epigenetic Profiling/Compu
+tational Analysis/RNA-Seq
+
+File: Recount2_Gtex_Heart_metadata_map.tsv 
+This file contains the metadata for GTEx and embryonic heart. It is assuming that embryonic heart samples are tagged at the end. I also had to edit this file manually by adding in four tissue designations because they were missing from the original file provided by Recount2.
+
+File Gini_Score.R
+File contains scripts to calculate gini score from counts matrix. 
+Functions should be used in the following order:
+tissue_colval()
+Gets list of indexes for each tissue type.
+Tissue_Average()
+Calculates average counts for each tissue type.
+Tissue_max()
+Gives gene a tissue designation based on maximum count.
+GeneGini()
+Calculates gini score for each gene.
+
+File gene2gini.Rdata
+Dataframe containing the gini scores for each gene, along with their ensembl indentifier and gene symbol, and their tissue designation.
+
+File gene2gini.Rdata
+tsv file containing the dataframe in gene2gini.Rdata. This is the file used for Supplementary Table S5 in the human embryonic heart paper.
+
+File boxplot_data.Rdata
+File contains dataframe used to plot Figure 6B in the paper. 
