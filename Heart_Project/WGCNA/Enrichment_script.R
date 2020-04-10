@@ -1,13 +1,23 @@
-#Be sure to have logcts (see how to setup)
-#Input a list of colors for "mod"
-#Input a character vector of genes you want to check enrichment for as "li"
+##Be sure to have logcts (see how to setup)
+
+#load("HumanHeart_rnaseq_dds_rlog.Rdata")
+#load("Human_Heart_WGCNA_mods.Rdata")
+#logcts<-assay(dds_filt_log)
+#logcts<-as.data.frame(logcts)
+#logcts$col<-merged_mods$mergedCol
+#row.names(logcts)<-gsub("\\..*","",row.names(logcts))
+#modcols<-as.list(unique(logcts$col))
+
+
+##Input a list of colors for "mod"
+##Input a character vector of genes you want to check enrichment for as "li"
 
 Enrichment_count<-function(mod){
   li<-as.character(Enh_cts_sym_ENS_filt$ENS)
 
-  modgenes<-subset(brain, brain$Module == mod)
+  modgenes<-subset(logcts, logcts$col == mod)
   
-  overlap<-length(intersect(modgenes$gene_id,li))
+  overlap<-length(intersect(row.names(modgenes),li))
   
   return(overlap)
 }
@@ -15,7 +25,7 @@ Enrichment_count<-function(mod){
 Enrichment_count_random<-function(mod){
   li<-repbound_ens2
   
-  tmpshuffle<-sample(c(1:23782))
+  tmpshuffle<-sample(c(1:26122))
   tmpranddf<-logcts
   tmpranddf$col<-logcts$col[tmpshuffle]
   
@@ -44,7 +54,6 @@ pval_func<-function(actual,observed){
   
   oddsratio<-c()
   
-  #fracOR<-c()
   
   for(i in c(1:length(actual))){
     
@@ -52,13 +61,9 @@ pval_func<-function(actual,observed){
     
     tmpor<- actual[[i]] / median(unlist(observed[,i]))
     
-    #tmpfrac<- real[[i]] / (0.0087*nummodgenes[colmods[i]])
-    
     pval<-c(pval,tmppval)
     
     oddsratio<-c(oddsratio,tmpor)
-    
-    #fracOR<-c(fracOR,tmpfrac)
     
   }
   df<-data.frame("mod"=unique(logcts$col),"pval"=pval,"OR"=oddsratio)
