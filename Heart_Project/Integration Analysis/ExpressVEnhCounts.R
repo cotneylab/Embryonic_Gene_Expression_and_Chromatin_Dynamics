@@ -158,7 +158,13 @@ for(i in as.numeric(boxpl$Enhcts)){
 }
 
 boxpl$bin<-vec
-
+#CRITICAL PIECE OF CODE TO MAKE LIFE EASIER FOR PLOTTING#
 boxpl$Tissue<-factor(boxpl$Tissue,levels=levels(boxpl$Tissue)[c(3,1,2,4,5,6)])
 
  pbx<-ggplot(data=boxpl,aes(x=bin, y=log2AvgX, fill=Tissue))+geom_violin(draw_quantiles = c(0.25,0.5,0.75))+stat_compare_means(aes(group=Tissue),label="p.format")+scale_fill_manual(values=c("orangered2","gray71"))
+
+#Make the significance plots:
+
+ggplot(data=second,aes(x=Tissue,y=log2avg,fill=Tissue))+geom_violin(draw_quantiles = c(0.25,0.5,0.75))+scale_fill_manual(values=c("orangered2",rep("grey71",31)))+stat_compare_means(ref.group = c("Embryonic Heart"),label="p.signif")+theme(legend.position="none",axis.text.x=element_text(angle=45,hjust=1))
+
+
