@@ -12,7 +12,7 @@ tmp<-subset(overlaps_df, overlaps_df$queryHits == i)
 
 tot_window<-post_prob[tmp$subjectHits,]
 
-df_sub<-tot_window[,c("E9","E10","E13","E14","E15","E18")]
+df_sub<-tot_window[,c("E13","E14","E15","E18")]
 
 scores_per_chr<-c(scores_per_chr,mean(rowSums(df_sub)))
 

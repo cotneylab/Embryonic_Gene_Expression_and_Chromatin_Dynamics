@@ -8,4 +8,4 @@ Loops through all samples and initializes variables and saves data to output.
 Calls ROC_calc.R
 
 ROC_calc.R
-Calculates the mean of the sum of the posterior probabilities for  states 9, 10, 13, 14,15 and 18  for all true positive or true negative segments.
+Calculates the mean of the sum of the posterior probabilities for  states 13, 14,15 and 18  for all true positive or true negative segments.
