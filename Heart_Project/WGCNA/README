@@ -1,0 +1,11 @@
+Enrichment_script.R
+To get the p-val and odds ratio of a list of genes within the WGCNA modules
+
+GO_Analysis.R
+Automate GO analysis with David and generate dotplots. 
+
+Make_Network_Files.R
+Outputs csv files containing 0s and 1s for prioritizing module genes and "NA/<name>" for cytoscape node files. 
+
+Make_Network.R
+Outputs edge file for cytoscape. 
