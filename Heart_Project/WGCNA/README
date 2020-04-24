@@ -9,3 +9,6 @@ Outputs csv files containing 0s and 1s for prioritizing module genes and "NA/<na
 
 Make_Network.R
 Outputs edge file for cytoscape. 
+
+stringdb_enrichment.R 
+Outputs total number of modules with significant ppi enrichment for scrambled network. 
