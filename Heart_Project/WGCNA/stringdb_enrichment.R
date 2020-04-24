@@ -1,3 +1,4 @@
+#Expecting input of dataframe of the node files (see table S6 from paper)
 
 
 WGCNA_random<-function(){
@@ -45,4 +46,13 @@ df_sub<-subset(df, df$Enrichment <= 0.00172)
 
 return(nrow(df_sub))
 }
+
+
+##To run 
+#library(STRINGdb)
+#source("stringdb.R")
+#load("wgcna_genespermod.Rdata")
+#observed<-permutationfunc(20)
+#save(observed,file="observed1_ppi_enrich_ct.Rdata")
+
 
