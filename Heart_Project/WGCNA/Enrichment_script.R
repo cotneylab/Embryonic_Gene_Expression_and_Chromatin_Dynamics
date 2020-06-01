@@ -13,7 +13,6 @@
 ##Input a character vector of genes you want to check enrichment for as "li"
 
 Enrichment_count<-function(mod){
-  li<-as.character(Enh_cts_sym_ENS_filt$ENS)
 
   modgenes<-subset(logcts, logcts$col == mod)
   
@@ -23,7 +22,6 @@ Enrichment_count<-function(mod){
 }
 
 Enrichment_count_random<-function(mod){
-  li<-repbound_ens2
   
   tmpshuffle<-sample(c(1:26122))
   tmpranddf<-logcts
