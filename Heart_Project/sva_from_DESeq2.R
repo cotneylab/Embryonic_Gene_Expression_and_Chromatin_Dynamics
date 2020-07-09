@@ -1,4 +1,4 @@
-##General code to get SV corrected counts from DESeq2 objects
+##General code to get SVA corrected counts from DESeq2 objects
 
 library(DESeq2)
 
