@@ -1,0 +1,1 @@
+p<-ggplot(plot_df,aes(x=Bins,y=numEnh,fill=Group))+geom_bar(stat="identity",position="dodge")+scale_fill_manual(values=c("orangered2","gray71"))+xlab("")+ylab("Number of Enhancers")+theme(legend.title=element_blank())+geom_errorbar(aes(ymin=numEnh-sd, ymax=numEnh+ sd),position=position_dodge(.9),width=0.25)
