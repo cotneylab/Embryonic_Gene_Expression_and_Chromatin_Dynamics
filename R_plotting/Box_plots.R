@@ -12,3 +12,4 @@ p<-ggplot(plot_dat,aes(x=State,y=Value,fill=Tissue_state),show.legend=FALSE)+
 #+theme(axis.text.x=element_text(angle=45))
 
 
+
