@@ -1,38 +1,10 @@
-library(ggraph)
-library(igraph)
-
-get_colors<-function(dat){
-  #Get the module colors
-  colvec<-c()
-  
-  for(i in row.names(dat)){  
-    
-    tempcol<-substr(i, start=3, stop=nchar(i))
-    
-    colvec<-c(colvec,tempcol)
-    
-  }
-  return(colvec)
-  
-}
-
-get_MEcol<-function(dat){
-  
-  n<-c()
-  for (i in row.names(dat)){
-    tmp<-paste("ME",i,sep="")
-    n<-c(n,tmp)
-  }
-
-  return(n)
-}
-
-
-makeSegments<-function(cor_ME,mod_points,segmentdf,modules){
+makeSegments<-function(cor_ME,mod_points,segmentdf=data.frame(NULL),modules){
   
   if(length(modules) == 1){
+   
     return(segmentdf)
   }
+  
   
   currentmod<-modules[1]
   
@@ -47,16 +19,19 @@ makeSegments<-function(cor_ME,mod_points,segmentdf,modules){
   cor_ME_tmp<-cor_ME_tmp[order(-cor_ME_tmp[,currentmod]),]
   
   endpts<-mod_points[row.names(cor_ME_tmp)[2:nrow(cor_ME_tmp)],]
+  if(nrow(cor_ME_tmp) == 2){
+    endpts<-data.frame("V1e"=endpts[1], "V2e"=endpts[2])
+  }
+  print(endpts)
   
   colnames(endpts)<-c("V1e","V2e")
+  endpts<-as.data.frame(endpts)
   endpts$mod<-row.names(endpts)
   tmpli<-mod_points[currentmod,]
   
-  startpts<-as.data.frame(lapply(tmpli,rep,(nrow(cor_ME_tmp)-1)))
-
+  startpts<-data.frame("s1"=rep(tmpli[1],nrow(cor_ME_tmp)-1),"s2"=tmpli[2])
+  
   segments<-cbind(startpts,endpts)
- 
-  #segments$to<-c(row.names(startpts),row.names(endpts))
   
   segments$cor<-cor_ME_tmp[,currentmod][2:nrow(cor_ME_tmp)]
   
@@ -67,6 +42,3 @@ makeSegments<-function(cor_ME,mod_points,segmentdf,modules){
   return(makeSegments(cor_ME=cor_ME,mod_points=mod_points,segmentdf=segmentdf,
                       modules=modules[2:length(modules)]))
 }
-
-
-
