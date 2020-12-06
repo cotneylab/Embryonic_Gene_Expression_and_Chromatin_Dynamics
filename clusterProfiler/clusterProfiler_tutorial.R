@@ -2,27 +2,56 @@
 
 library(clusterProfiler)
 library(org.Hs.eg.db)
+library(AnnotationDbi)
+library(reshape2)
+library(ggraph)
+library(igraph)
 
 
-##Convert gene ids to entrez 
+
+#Also source all code from
+#https://github.com/YuLab-SMU/enrichplot/blob/master/R/emapplot.R  (use the emapplot_reconfig.R that has edited code tara made)
+#https://github.com/YuLab-SMU/enrichplot/blob/master/R/utilities.R
+
 ##If your ensembl IDs have ".XX" suffix, you need to remove using this code: 
 #gsub("\\..*","",df$geneID)
-
-##genes to GO
-cl1_up<-mapIds(org.Hs.eg.db,keys=genes2$cl2,column="ENTREZID",keytype="ENSEMBL",multiVals="first")
-
-##background set of genes 
-uni<-mapIds(org.Hs.eg.db,keys=genes2$cl2,column="ENTREZID",keytype="ENSEMBL",multiVals="first")
-
+#make list of genes per cluster
+#HM_genes<-list("pink"=pink,"purple"=gsub("\\..*","",row.names(clus_genes$cl2_purple)))
 
 ##GO over-representation test 
 
-ego = enrichGO(gene=cl1_up$ENTREZD, universe=uni$ENTREZID,
-	OrgDb=org.Hs.eg.db, ont ="BP",
-	pAdjustMethod= "BH",
-	pvalueCutoff =0.01,
-	qvalueCutoff=0.05,
-	readable=TRUE)
 
-#dotplot 
+enrich_GO_HM<-vector(mode="list",length=6)
+
+
+#Input list for each cluster of genes
+
+enrich_GO_HM<-function(genes){
+
+  enrich_GO_HM<-vector(mode="list",length=3)
+
+ontology<-c("MF","CC","BP")  
+
+names(enrich_GO_HM)<-ontology
+
+for( i in ontology){
+
+  ego_tmp<-enrichGO(genes,keyType = "ENSEMBL",ont=i,OrgDb = org.Hs.eg.db)
+
+ego_tmp@result$plog<--log(ego_tmp@result$p.adjust,2)
+
+   enrich_GO_HM[[i]]<-ego_tmp
+
+}
+
+  return(enrich_GO_HM)
+
+}
+
+li_enrichGO<-lapply(HM_genes,enrich_GO_HM)
+#To plot, change colors as needed in the emapplot_reconfig.R and source.
+#source("emapplot_reconfig.R")
+#emapplot(li_enrichGO$pink$BP)+theme_bw()
+
+
 

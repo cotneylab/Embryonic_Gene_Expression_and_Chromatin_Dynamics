@@ -125,7 +125,7 @@ emapplot.enrichResult <- function(x, showCategory = 30, color="plog", layout = "
   }
   p + geom_node_point(aes_(fill=~color, size=~size),shape=21,color="black") +
     geom_node_text(aes_(label=~name), repel=TRUE,size=5) + theme_void() +
-    scale_fill_gradient(low="palegreen", high="darkgreen", name = color, guide=guide_colorbar(reverse=FALSE)) +
+    scale_fill_gradient(low="mistyrose", high="deeppink", name = color, guide=guide_colorbar(reverse=FALSE)) +
     scale_size(range=c(3, 18) * pie_scale)
   
 }
