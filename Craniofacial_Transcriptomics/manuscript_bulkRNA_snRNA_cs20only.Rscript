@@ -1,0 +1,658 @@
+library(Seurat)
+library(ggplot2)
+library(magrittr)
+library(harmony)
+library(DESeq2)
+library(SingleCellExperiment)
+library(patchwork)
+library(ggrepel)
+library(wordcloud)
+library(RColorBrewer)
+library(wordcloud2)
+library(tm)
+library("clusterProfiler")
+library("gplots")
+library("devtools")
+library("dplyr")
+library("ggplot2")
+library("AnnotationDbi")
+library("BiocParallel")
+library("RColorBrewer")
+library("org.Hs.eg.db")
+library(enrichplot)
+library("ggupset")
+library(ggsignif)
+set.seed(123)
+library("htmltools")
+library("vembedr")
+library(Matrix)
+library(irlba)
+library(ggplot2) # Tidyverse is pre-installed, yay!
+library(dplyr)
+library(scico)
+set.seed(123)
+library(Seurat)
+library(DropletUtils)
+set.seed(123)
+library(tidyverse)
+library(readr)
+library(BUSpaRse)
+library(ggpointdensity)
+read_count_output <- function(dir, name) {
+  m <- readMM(paste0(dir, "/", name, ".mtx"))
+  m <- Matrix::t(m)
+  m <- as(m, "dgCMatrix")
+  # The matrix read has cells in rows
+  ge <- ".genes.txt"
+  genes <- readLines(file(paste0(dir, "/", name, ge)))
+  barcodes <- readLines(file(paste0(dir, "/", name, ".barcodes.txt")))
+  colnames(m) <- barcodes
+  rownames(m) <- genes
+  return(m)
+}
+pdf(file="all_reps_qc_kallisto.pdf")
+list<-c("cs20_01", "cs20_02")
+flw<-vector("list", length(list))
+tr2g <- read_tsv("/home/CAM/ewentworth/cotney/genome/hg38/t2g.txt", col_names = c("transcript", "gene", "gene_symbol"))
+
+for (REPNUM in list){
+flw[[REPNUM]]<-paste("face", REPNUM, sep="")
+#res_mat <- read_count_output(paste("/home/CAM/ewentworth/cotney/rawdata/human/embryonic_craniofacial/multiome/", REPNUM, "/rna-out/counts_unfiltered", sep=""), name = "spliced")
+res_mat<-make_sparse_matrix(
+paste("/home/CAM/ewentworth/cotney/rawdata/human/embryonic_craniofacial/multiome/", REPNUM, "/rna-out/test.txt", sep=""),
+  tr2g,
+  est_ncells,
+  est_ngenes,
+  whitelist = paste("/home/CAM/ewentworth/cotney/rawdata/human/embryonic_craniofacial/multiome/", REPNUM, "/rna-out/10xv2_whitelist.txt", sep=""),
+  gene_count = TRUE,
+  TCC = TRUE,
+  single_gene = TRUE,
+  verbose = TRUE,
+  progress_unit = 5e+06
+)
+dim(res_mat)
+tot_counts <- Matrix::colSums(res_mat)
+summary(tot_counts)
+bc_rank <- barcodeRanks(res_mat, lower = 10)
+knee_plot <- function(bc_rank) {
+  knee_plt <- tibble(rank = bc_rank[["rank"]],
+                     total = bc_rank[["total"]]) %>% 
+    distinct() %>% 
+    dplyr::filter(total > 0)
+  annot <- tibble(inflection = metadata(bc_rank)[["inflection"]],
+                  rank_cutoff = max(bc_rank$rank[bc_rank$total > metadata(bc_rank)[["inflection"]]]))
+  p <- ggplot(knee_plt, aes(total, rank)) +
+    geom_line() +
+    geom_hline(aes(yintercept = rank_cutoff), data = annot, linetype = 2) +
+    geom_vline(aes(xintercept = inflection), data = annot, linetype = 2) +
+    scale_x_log10() +
+    scale_y_log10() +
+    annotation_logticks() +
+    labs(y = "Rank", x = "Total UMIs")
+  return(p)
+}
+print(knee_plot(bc_rank))
+res_mat <- res_mat[, tot_counts > metadata(bc_rank)$inflection]
+res_mat <- res_mat[Matrix::rowSums(res_mat) > 0,]
+dim(res_mat)
+rownames(res_mat) <- tr2g$gene_symbol[match(rownames(res_mat), tr2g$gene)]
+seu <- CreateSeuratObject(res_mat, min.cells = 3, min.features = 1, project=paste("face_", REPNUM, sep=""))
+seu[["percent.mt"]] <- PercentageFeatureSet(seu, pattern = "^mt-")
+# Visualize QC metrics as a violin plot
+print(VlnPlot(seu, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, pt.size = 0.1, ))
+print(ggplot(seu@meta.data, aes(nCount_RNA, nFeature_RNA)) +
+  geom_hex(bins = 100) +
+  scale_fill_scico(palette = "devon", direction = -1, end = 0.9) +
+  scale_x_log10() + 
+  scale_y_log10() + annotation_logticks() +
+  labs(x = "Total UMI counts", y = "Number of genes detected") +
+  theme(panel.grid.minor = element_blank()))
+print(ggplot(seu@meta.data, aes(nCount_RNA, percent.mt)) +
+  geom_pointdensity() +
+  scale_color_scico(palette = "devon", direction = -1, end = 0.9) +
+  labs(x = "Total UMI counts", y = "Percentage mitochondrial"))
+saveRDS(seu, file=paste(flw[[REPNUM]], "_for_integration_2.rds", sep=""))
+assign(flw[[REPNUM]], seu)
+}
+
+dev.off()
+
+
+
+
+files<-list.files(path="../", pattern="_for_integration.rds")
+flw<-vector("list", length(files))
+for (filename in files){
+flw[[filename]]<-gsub("_for_integration.rds", "", filename)
+name<-readRDS(file=filename)
+assign(flw[[filename]], name)
+}
+
+name<-merge(cs20_01, y=cs20_02, add.cell.ids = c('cs20_01#', 'cs20_02#'), project="embryonic_human_CF")
+name<-RenameCells(name, new.names=gsub("_C", "C", gsub("_T", "T", gsub("_G", "G", gsub("_A", "A", Cells(name))))))
+
+DefaultAssay(name)<-"RNA"
+name[["percent.mt"]]<-PercentageFeatureSet(name, pattern="^MT-")
+name <- subset(name, subset = nFeature_RNA > 200 & nFeature_RNA < 5000 & percent.mt < 5 )
+name <- NormalizeData(name)
+name <- FindVariableFeatures(name, selection.method = "vst", nfeatures = 2000)
+top10 <- head(VariableFeatures(name), 20)
+pdf(file="combined_variable_features_plot.pdf")
+print(VariableFeaturePlot(name))
+plot1<-VariableFeaturePlot(name)
+print(LabelPoints(plot = plot1, points = top10, repel = TRUE))
+dev.off()
+s.genes <- cc.genes$s.genes
+g2m.genes <- cc.genes$g2m.genes
+name<-CellCycleScoring(name, s.features=s.genes, g2m.features=g2m.genes, set.ident=TRUE)
+name$CC.Difference <- name$S.Score - name$G2M.Score
+name <- ScaleData(name, features = rownames(name))
+human_face<-name
+
+human_face <- RunPCA(human_face, features = VariableFeatures(name))
+pdf(file="dimensions.pdf")
+print(human_face[["pca"]], dims = 1:5, nfeatures = 5)
+VizDimLoadings(human_face, dims = 1:2, reduction = "pca")
+DimPlot(human_face, reduction = "pca")
+DimHeatmap(human_face, dims = 1, cells = 500, balanced = TRUE)
+DimHeatmap(human_face, dims = 1:15, cells = 500, balanced = TRUE)
+human_face <- JackStraw(human_face, num.replicate = 100)
+human_face <- ScoreJackStraw(human_face, dims = 1:20)
+JackStrawPlot(human_face, dims = 1:15)
+ElbowPlot(human_face)
+dev.off()
+human_face<- RunHarmony(human_face, "orig.ident")
+
+human_face <- FindNeighbors(human_face, dims = 1:15, reduction='harmony')
+human_face <- FindClusters(human_face, resolution = 0.4)
+human_face <- RunUMAP(human_face, dims = 1:15, reduction="harmony")
+pdf(file="UMAP.pdf")
+DimPlot(human_face, reduction = "umap")
+DimPlot(human_face, reduction = "umap", group.by = "orig.ident")
+dev.off()
+human_face$Idents<-human_face$seurat_clusters
+pct<-table(Idents(human_face), human_face$orig.ident)
+pct<-as.data.frame(pct)
+pdf(file="per_sample_cluster_percents.pdf")
+ggplot(pct, aes(x = Var2, y = Freq, fill = Var1)) + theme_bw(base_size = 15) + geom_col(position = "fill", width = 0.5) + xlab("Sample") + ylab("Proportion") + theme(legend.title = element_blank()) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+ggplot(pct, aes(x = Var1, y = Freq, fill = Var2)) + theme_bw(base_size = 15) + geom_col(position = "fill", width = 0.5) + xlab("Cluster") + ylab("Proportion") + theme(legend.title = element_blank()) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+
+dev.off()
+
+saveRDS(human_face, file = "human_face_with_rep_data.rds")
+
+levels<-data.frame(Idents(human_face))
+x<-unique(levels$Idents.human_face.)
+human_face.markers <- FindAllMarkers(human_face, only.pos = TRUE, test.use = "roc", min.pct = 0.25, logfc.threshold = 0.25)
+flw<-vector("list", length(x))
+for (val in x){
+flw[[val]]<-FindMarkers(human_face, ident.1 = val, min.diff.pct = 0.25, logfc.threshold = 0.25, test.use = "roc", only.pos = TRUE)
+assign(paste("clustermarkers", val, sep=""), flw[[val]])
+write.table(data.frame(flw[[val]]), file=(paste("human_face_clustermarkers", val, ".txt", sep="")), sep="\t")
+}
+standardmarkers<-c("POU5F1", 'PITX2', 'PAX9', 'PAX3', 'BARX1', 'MSX1', 'MSX2', 'FCER1G', 'HEMGN', 'LEF1', 'CD24', 'CD59', 'CD38', 'CD44', 'THY1', 'ENG', 'ALX1', 'HOXA2', 'TP63', 'TFAP2A', 'PAX7', 'IRF6', 'MYC', 'SOX9')
+
+standardmarkers<-c("ALX1", 'MSX1', "CDH5", 'FCER1G', 'EPCAM', 'SOX10', 'GAP43', 'BLBP', 'MPZ', 'DHH')
+pdf(file="Figure4.pdf", height=25, width=15)
+p7<-DimPlot(human_face, reduction = "umap", group.by = "seurat_clusters", pt.size=1.5, label.size=14) + theme(legend.text=element_text(size=15))
+a<- FeaturePlot(human_face, features = standardmarkers, ncol=3, combine = TRUE) 
+b<-VlnPlot(human_face, features = standardmarkers, slot = "counts", log = TRUE, group.by="seurat_clusters", ncol=3)
+f <- DimPlot(human_face, reduction="umap", group.by="seurat_clusters", pt.size=1.5, label.size=14) & theme(legend.text=element_text(size=15))
+g <- DotPlot(human_face, features = standardmarkers, group.by="seurat_clusters")
+(p7 | g) / a / f
+dev.off()
+jpeg(file="Figure4.jpg", height=2500, width=1500)
+(p7 | g) / a / f
+dev.off()
+
+#cd24, 59, 38 are HSC markers
+#cd44, cd90, cd105 are MSC markers
+
+pdf(file="human_face_standard_markers.pdf", height=5, width=5)
+DimPlot(human_face, reduction = "umap", group.by="Idents")
+DimPlot(human_face, reduction = "umap", group.by = "orig.ident")
+for (featuremarker in standardmarkers){
+print(FeaturePlot(human_face, features = featuremarker))
+print(VlnPlot(human_face, features = featuremarker, slot = "counts", log = TRUE, group.by="Idents"))
+}
+print(DoHeatmap(human_face, features = standardmarkers, group.by="Idents") + NoLegend())
+dev.off()
+markers<-ls(pattern="clustermarkers")
+pdf(file="human_face_markers_renamed.pdf")
+print(DimPlot(human_face, reduction = "umap"))
+for (val in markers){
+print(val)
+value<-get(val)
+features<-rownames( head(value[order(-value$avg_logFC),],5))
+for (genename in features){
+print(FeaturePlot(human_face, features = genename))
+print(VlnPlot(human_face, features = genename, slot = "counts", log = TRUE, group.by="Idents"))
+}
+#print(DoHeatmap(human_face, features = features, group.by="Idents") + NoLegend())
+}
+dev.off()
+
+write.table(rownames(human_face), file="background_genes.txt", sep="\t")
+
+convertMouseGeneList <- function(x){
+require("biomaRt")
+mart <- useEnsembl(biomart = "ensembl", 
+                   dataset = "hsapiens_gene_ensembl", verbose = FALSE, mirror="www")
+mart1 <- useEnsembl(biomart = "ensembl", 
+                   dataset = "mmusculus_gene_ensembl", verbose = FALSE, mirror="www")
+genesV2 = getLDS(attributes = c("mgi_symbol"), filters = "mgi_symbol", values = x , mart = mart1, attributesL = c("hgnc_symbol"), martL = mart, uniqueRows=T)
+mousex <- unique(genesV2[, 2])
+return(mousex)
+}
+table<-read.table("williams_marker_table.txt", header=TRUE, sep="\t")
+nodes<-unique(table$cluster)
+for (node in nodes){
+y<-subset(table, table$cluster == node)
+y<-subset(y, y$avg_logFC > 1)
+y<-y$gene
+write.table(y, paste("ModuleTW", gsub(" ", "", node), ".txt", sep=""), sep="\t")
+assign(paste("Module", node, sep=""), y)
+}
+
+nodes<-c("ModuleEpithelium.txt", "ModuleMesenchyme.txt", "ModuleImmune.txt", "ModulePerivascular.txt", "ModuleEndothelium.txt", "ModuleTWotherbloodcells.txt", "ModuleTWendothelium.txt", "ModuleTWmesenchyme.txt", "ModuleTWredbloodcells.txt", "ModuleTWectoderm.txt", "ModuleTWschwanncells.txt")
+for (node in nodes){
+mod<-read.table(file=node, header=TRUE, sep="\t")
+options(connectionsObserver=NULL)
+new<-convertMouseGeneList(mod$x)
+write.table(new, file=paste("Human", node, sep=""), sep="\t")
+}
+nodes1<-grep(list.files(pattern="Module"), pattern="Human", invert=TRUE, value=TRUE)
+nodes1<-setdiff(nodes1, nodes)
+for (node in nodes1){
+mod<-read.table(file=node, header=TRUE, sep="\t")
+options(connectionsObserver=NULL)
+new<-convertMouseGeneList(mod$X)
+write.table(new, file=paste("Human", node, sep=""), sep="\t")
+}
+
+p<-DimPlot(human_face, reduction = "umap", group.by="seurat_clusters") + theme(aspect.ratio = 1)
+nodes<-list.files(pattern="HumanModule")
+for (node in nodes){
+mod<-read.table(file=node, header=TRUE, sep="\t")
+mod<-intersect(rownames(human_face), mod$x)
+print(node)
+print(length(mod))
+featurename<-gsub(".txt", "", gsub("HumanModule", "", node))
+modulename<-gsub(".txt", "", gsub("Human", "", node))
+human_face<-AddModuleScore(object=human_face, features=list(mod), bins=1, control=1000, name = featurename, seed = 1, search = TRUE)
+p<-DimPlot(human_face, reduction = "umap", group.by="seurat_clusters", pt.size=0.5) + theme(aspect.ratio = 1)
+f<-FeaturePlot(human_face, features =paste(featurename, "1", sep=""), cols=c('white', 'blue')) + theme(aspect.ratio = 1) + labs(title = "") 
+g<-VlnPlot(human_face, features =paste(featurename, "1", sep=""), slot = "counts", log = TRUE, group.by="seurat_clusters") + geom_boxplot(width=0.1,fill="white") + theme(aspect.ratio = 1) + labs(title = modulename) 
+#print((p | f | g)+ plot_annotation(modulename))
+assign(modulename, mod)
+}
+n<-DotPlot(human_face, features=c("Epithelium1", "TWectoderm1", "Mesenchyme1", "TWmesenchyme1", "Endothelium1", "TWendothelium1", "Immune1", "TWotherbloodcells1", "TWredbloodcells1", "Perivascular1", "TWschwanncells1", "Glia1"), group.by="seurat_clusters") + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + labs(y="Cluster Classification", x="Gene Module from Adult Incisor")
+allmods<-paste(gsub("HumanModule|.txt", "", nodes), "1", sep="")
+l<-DotPlot(human_face, features=allmods, group.by="seurat_clusters") + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + labs(y="Cluster Classification", x="Gene Module from Adult Incisor")
+pdf(file="Supplement_sc_incisor_based_module_scores.pdf", height=8.5, width=16)
+(p | n) 
+l
+dev.off()
+
+
+
+background<-rownames(human_face)
+background <- bitr(background, fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Hs.eg.db")
+human_face[["RNA"]]@counts<-as.matrix(human_face[["RNA"]]@counts)+1
+
+x<-levels(unique(human_face$seurat_clusters))
+f<-c()
+flw<-vector("list", length(x))
+background <- bitr(rownames(human_face), fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Hs.eg.db")
+for (val in x){
+print(val)
+flw[[val]]<-FindMarkers(human_face, ident.1 = val, min.pct=0.25, logfc.threshold=0.25, slot = "counts", max.cells.per.ident=400)
+flw[[val]]<-subset(flw[[val]], avg_logFC > 0.25)
+#flw[[val]]<-read.table(file=(gsub("/", "_", gsub(" ", "", paste("human_face_clustermarkers", val, ".txt", sep="")))))
+assign(gsub(" |\\+", "", paste("clustermarkers", val, sep="")), flw[[val]])
+y<-as.data.frame(get(paste("clustermarkers", val, sep="")))
+n<-tail(y[order(y$avg_logFC),], 10)
+f<-rbind(f, n)
+value <- bitr(rownames(y), fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Hs.eg.db")
+value_go <- enrichGO(gene = value$ENTREZID,
+                   universe = background$ENTREZID,
+                   OrgDb = org.Hs.eg.db, 
+                   keyType = 'ENTREZID',
+                   readable = T,
+                   ont = "ALL",
+                   qvalueCutoff = 0.05,
+                   pAdjustMethod = "bonferroni")
+value_bp <- enrichGO(gene = value$ENTREZID,
+                      universe = background$ENTREZID,
+                      OrgDb = org.Hs.eg.db, 
+                      keyType = 'ENTREZID',
+                      readable = T,
+                      ont = "BP",
+                      qvalueCutoff = 0.05,
+                      pAdjustMethod = "bonferroni")
+l<-upsetplot(value_bp) + ggtitle(paste("Cluster", val, " Genes BP"))
+value_bp1<-simplify(value_bp, cutoff=0.8, by="p.adjust")
+value_bp1<-as.data.frame(value_bp1)
+v1<-as.data.frame(value_bp1[, 6])
+v1$V3<-value_bp1$Description
+v1<-head(v1, 20)
+colnames(v1)<-c(paste("Cluster", val, sep="_"), "ID")
+assign(paste("Cluster", val, sep="_"), v1)
+assign(paste("cluster", val, sep=""), l)
+write.table(data.frame(flw[[val]]), file=(gsub("/", "_", gsub(" ", "", paste("human_face_clustermarkers", val, ".txt", sep="")))), sep="\t")
+}
+x<-Reduce(function(x, y) merge(x, y, by.x="ID", by.y="ID", all=TRUE), list(Cluster_0, Cluster_1, Cluster_2, Cluster_3, Cluster_4, Cluster_5, Cluster_6, Cluster_7, Cluster_8))
+x[is.na(x)] <- 1
+rownames(x)<-x$ID
+x<-x[,2:9]
+x<-(-log10(x))
+write.table(x, file="Supplemental_table_GO_all_clusters_original_numbers.txt")
+library("ggplot2")
+library("ggdendro")
+library("grid")
+library("reshape2")
+library("pheatmap")
+pdf(file="allclusters_beforerenaming_geneontology_markergeneexpression_heatmap.pdf", height=20, width=20)
+(cluster0 + cluster1 + cluster2 + cluster3) / (cluster4 + cluster5 + cluster6 + cluster7) / (cluster8)
+myheatmap<-pheatmap(x,scale="row",show_rownames=FALSE)
+myheatmap
+DoHeatmap(human_face, features=f)
+dev.off()
+
+
+
+
+
+human_face<-RenameIdents(human_face, `0`='Mesenchyme', `1`='Cartilage Progenitor Cells', `2`='Epithelium', `3`='Muscle Progenitor Cells', `4`='Neural Progenitor Cells', `5`='Endothelium', `6`='Bone Progenitor Cells', `7`='Glial Progenitor Cells', `8`='Blood Cells')
+
+x<-levels(unique(Idents(human_face)))
+f<-c()
+flw<-vector("list", length(x))
+background <- bitr(rownames(human_face), fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Hs.eg.db")
+for (val in x){
+print(val)
+flw[[val]]<-FindMarkers(human_face, ident.1 = val, test.use = "DESeq2", min.pct=0.25, logfc.threshold=0.5, slot = "counts", max.cells.per.ident=200)
+flw[[val]]<-subset(flw[[val]], avg_logFC > 0.5)
+#flw[[val]]<-read.table(file=(gsub("/", "_", gsub(" ", "", paste("human_face_clustermarkers", val, ".txt", sep="")))))
+assign(gsub(" |\\+", "", paste("clustermarkers", val, sep="")), flw[[val]])
+y<-as.data.frame(get(gsub(" |\\+", "", paste("clustermarkers", val, sep=""))))
+n<-tail(y[order(y$avg_logFC),], 10)
+f<-rbind(f, n)
+value <- bitr(rownames(y), fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Hs.eg.db")
+value_go <- enrichGO(gene = value$ENTREZID,
+                   universe = background$ENTREZID,
+                   OrgDb = org.Hs.eg.db, 
+                   keyType = 'ENTREZID',
+                   readable = T,
+                   ont = "ALL",
+                   qvalueCutoff = 0.05,
+                   pAdjustMethod = "bonferroni")
+value_bp <- enrichGO(gene = value$ENTREZID,
+                      universe = background$ENTREZID,
+                      OrgDb = org.Hs.eg.db, 
+                      keyType = 'ENTREZID',
+                      readable = T,
+                      ont = "BP",
+                      qvalueCutoff = 0.05,
+                      pAdjustMethod = "bonferroni")
+l<-upsetplot(value_bp) + ggtitle(paste("Cluster", val, " Genes BP"))
+value_bp1<-simplify(value_bp, cutoff=0.8, by="p.adjust")
+value_bp1<-as.data.frame(value_bp1)
+v1<-as.data.frame(value_bp1[, 6])
+v1$V3<-value_bp1$Description
+v1<-head(v1, 20)
+colnames(v1)<-c(gsub(" |\\+", "", paste("Cluster", val, sep="")), "ID")
+assign(gsub(" |\\+", "", paste("Cluster", val, sep="_")), v1)
+assign(gsub(" |\\+", "", paste("cluster", val, sep="_")), l)
+write.table(data.frame(flw[[val]]), file=(gsub("/", "_", gsub(" ", "", paste("human_face_clustermarkers", val, ".txt", sep="")))), sep="\t")
+}
+x<-Reduce(function(x, y) merge(x, y, by.x="ID", by.y="ID", all=TRUE), list(Cluster_Mesenchyme, Cluster_Epithelium, Cluster_Endothelium, Cluster_BloodCells, Cluster_SchwannCells, Cluster_MuscleProgenitorCells, Cluster_Glia, Cluster_NeuralProgenitorCells))
+x[is.na(x)] <- 1
+rownames(x)<-x$ID
+x<-x[,2:10]
+x<-(-log10(x))
+write.table(x, file="Supplemental_table_GO_all_clusters_original_numbers.txt")
+library("ggplot2")
+library("ggdendro")
+library("grid")
+library("reshape2")
+library("pheatmap")
+pdf(file="allclusters_beforerenaming_geneontology_markergeneexpression_heatmap.pdf", height=20, width=20)
+(cluster_Mesenchyme + cluster_Epithelium + cluster_Endothelium + cluster_CartilageProgenitorCells + cluster_NeuralProgenitorCells) / (cluster_BoneProgenitorCells + cluster_BloodCells + cluster_MuscleProgenitorCells + cluster_GlialProgenitorCells)
+myheatmap<-pheatmap(x,scale="row",show_rownames=FALSE)
+myheatmap
+DoHeatmap(human_face, features=f)
+dev.off()
+
+
+mesenchyme<-subset(human_face, idents="Mesenchyme")
+write.table(mesenchyme[["RNA"]]@data, file="Mesenchyme_counts_matrix_all_genes.txt", sep="\t")
+human_face$Idents<-Idents(human_face)
+
+
+
+
+
+pdf(file="fig_4j_module_scores.pdf", height=8.5, width=16)
+p<-DimPlot(human_face, reduction = "umap", group.by="Idents") + theme(aspect.ratio = 1)
+nodes<-list.files(pattern="Nodes")
+for (node in nodes){
+y<-read.table(file=node, sep=",", header=TRUE)
+#y<-y[y$HUB==1,]
+mod<-as.data.frame(y$SYMID)
+mod<-levels(mod[,1])
+mod<-intersect(mod, rownames(human_face))
+modulename<-gsub("_Nodes.csv", "", node)
+colorname<-gsub("1|2|3|4|5|6|7|8|9|0", "", modulename)
+human_face<-AddModuleScore(object=human_face, features=list(mod), bins=1, control=1000, name = modulename, seed = 1, search = TRUE, overwrite=TRUE)
+p<-DimPlot(human_face, reduction = "umap", group.by="Idents", pt.size=2.5) + theme(aspect.ratio = 1)
+f<-FeaturePlot(human_face, features =paste(modulename, "1", sep=""), cols=c('white', "blue")) + theme(aspect.ratio = 1) + labs(title = "") 
+g<-VlnPlot(human_face, features =paste(modulename, "1", sep=""), slot = "counts", log = TRUE, group.by="Idents", pt.size = 0.05) + geom_boxplot(width=0.1,fill="white") + theme(aspect.ratio = 1) + labs(title = modulename) + geom_signif(comparisons = list(c("Mesenchyme", "Epithelium"), c("Neural Progenitor Cells", "Mesenchyme"), c("Mesenchyme", "Endothelium"), c("Mesenchyme", "Glial Progenitor Cells"), c("Mesenchyme", "Blood Cells"), c("Mesenchyme", "Muscle Progenitor Cells", c("Mesenchyme", "Bone Progenitor Cells"))), map_signif_level = TRUE, textsize = 4, annotation="*")
+print((p | f | g)+ plot_annotation(modulename))
+assign(paste(modulename, "module", sep=""), mod)
+}
+dev.off()
+pdf(file="fig_4j_module_scores_dotplot.pdf", height=8.5, width=16)
+rm(modulename)
+allmods<-gsub("module", "", paste(ls(pattern="module"), "1", sep=""))
+DotPlot(human_face, features=allmods, group.by="Idents") + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + labs(y="Cluster Classification", x="Gene Module from WGCNA")
+dev.off()
+
+
+pdf(file="fig_4j_module_scores_HUBGENES.pdf", height=8.5, width=16)
+p<-DimPlot(human_face, reduction = "umap", group.by="Idents") + theme(aspect.ratio = 1)
+nodes<-list.files(pattern="Nodes")
+for (node in nodes){
+g1<-read.table(file=node, sep=",", header=TRUE)
+g1<-g1[g1$HUB==1,]
+mod<-as.data.frame(g1$SYMID)
+colnames(mod)<-c("SYMID")
+mod<-intersect(mod$SYMID, rownames(human_face))
+modulename<-gsub("_Nodes.csv", "", node)
+colorname<-gsub("1|2|3|4|5|6|7|8|9|0", "", modulename)
+human_face<-AddModuleScore(object=human_face, features=list(mod), bins=1, control=1000, name = modulename, seed = 1, search = TRUE, overwrite=TRUE)
+p<-DimPlot(human_face, reduction = "umap", group.by="Idents", pt.size=2.5) + theme(aspect.ratio = 1)
+f<-FeaturePlot(human_face, features =paste(modulename, "1", sep=""), cols=c('white', "blue")) + theme(aspect.ratio = 1) + labs(title = "") 
+g<-VlnPlot(human_face, features =paste(modulename, "1", sep=""), slot = "counts", log = TRUE, group.by="Idents", pt.size = 0.05) + geom_boxplot(width=0.1,fill="white") + theme(aspect.ratio = 1) + labs(title = modulename) + geom_signif(comparisons = list(c("Mesenchyme", "Epithelium"), c("Neural Progenitor Cells", "Mesenchyme"), c("Mesenchyme", "Endothelium"), c("Mesenchyme", "Glial Progenitor Cells"), c("Mesenchyme", "Blood Cells"), c("Mesenchyme", "Muscle Progenitor Cells", c("Mesenchyme", "Bone Progenitor Cells"), c("Mesenchyme", "Cartilage Progenitor Cells"))), map_signif_level = TRUE, textsize = 4, annotation="*")
+print((p | f | g)+ plot_annotation(modulename))
+assign(paste(modulename, "module", sep=""), mod)
+}
+dev.off()
+pdf(file="fig_4j_module_scores_HUBGENES_dotplot.pdf", height=8.5, width=16)
+rm(modulename)
+allmods<-gsub("module", "", paste(ls(pattern="module"), "1", sep=""))
+n<-DotPlot(human_face, features=allmods, group.by="Idents") + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + labs(y="Cluster Classification", x="Gene Module from WGCNA")
+n
+dev.off()
+
+
+ggsave("DotPlot_Hubgenes_forTara.eps", n, height=12, width=18)
+
+
+
+
+pdf(file="Supplement_sc_incisor_molar_based_module_scores_after_renaming.pdf", height=8.5, width=16)
+p<-DimPlot(human_face, reduction = "umap", group.by="Idents") + theme(aspect.ratio = 1)
+nodes<-list.files(pattern="Human")
+for (node in nodes){
+mod<-read.table(file=node, header=TRUE, sep="\t")
+mod<-intersect(rownames(human_face), mod$x)
+print(node)
+print(length(mod))
+featurename<-gsub(".txt", "", gsub("HumanModule", "", node))
+modulename<-gsub(".txt", "", gsub("Human", "", node))
+human_face<-AddModuleScore(object=human_face, features=list(mod), bins=1, control=1000, name = featurename, seed = 1, search = TRUE)
+p<-DimPlot(human_face, reduction = "umap", group.by="Idents", pt.size=0.5) + theme(aspect.ratio = 1)
+f<-FeaturePlot(human_face, features =paste(featurename, "1", sep=""), cols=c('white', 'blue')) + theme(aspect.ratio = 1) + labs(title = "") 
+g<-VlnPlot(human_face, features =paste(featurename, "1", sep=""), slot = "counts", log = TRUE, group.by="Idents") + geom_boxplot(width=0.1,fill="white") + theme(aspect.ratio = 1) + labs(title = modulename) 
+print((p | f | g)+ plot_annotation(modulename))
+assign(modulename, mod)
+}
+n<-DotPlot(human_face, features=c("TWectoderm1", "TWmesenchyme1", "TWendothelium1", "TWotherbloodcells1", "TWredbloodcells1", "TWschwanncells1"), group.by="Idents") + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + labs(y="Cluster Classification", x="Gene Module from E11.5 Mouse Pharyngeal Arches")
+allmods<-paste(gsub("HumanModule|.txt", "", nodes), "1", sep="")
+l<-DotPlot(human_face, features=allmods, group.by="Idents") + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + labs(y="Cluster Classification", x="Gene Module from Adult Incisor")
+(p | n) 
+l
+dev.off()
+
+
+nodes<-c("blackmod_top_scorers.csv")
+for (node in nodes){
+g1<-read.table(file=node, header=FALSE, sep=",")
+colnames(g1)<-c("ensid", "SYMID")
+mod<-as.data.frame(g1$SYMID)
+colnames(mod)<-c("SYMID")
+mod<-intersect(mod$SYMID, rownames(human_face))
+modulename<-gsub("_Nodes.csv", "", node)
+colorname<-gsub("1|2|3|4|5|6|7|8|9|0", "", modulename)
+human_face<-AddModuleScore(object=human_face, features=list(mod), bins=1, control=1000, name = modulename, seed = 1, search = TRUE, overwrite=TRUE)
+}
+a<-DimPlot(human_face, reduction = "umap", group.by="Idents", pt.size=1.5) + theme(aspect.ratio = 1)
+b<-FeaturePlot(human_face, features="blackmod_top_scorers.csv1", pt.size=1) + theme(aspect.ratio = 1) + labs(title="Black Module")
+c<-VlnPlot(human_face, features = "blackmod_top_scorers.csv1", slot = "counts",  group.by="Idents", pt.size = 0.05) + geom_boxplot(width=0.1,fill="white") + theme(aspect.ratio = 1) + labs(title = "Black Module") + geom_signif(comparisons = list(c("Mesenchyme", "Epithelium"), c("Cartilage Progenitor Cells", "Epithelium"), c("Endothelium", "Epithelium"), c("Bone Progenitor Cells", "Epithelium"), c("Blood Cells", "Epithelium")), map_signif_level = TRUE, test = "wilcox.test", textsize = 6) + ylim(-0.2, 0.2)
+d<-(a/b/c)
+ggsave("FORFIGURE7.eps", d, height=12, width=18)
+pdf(file="test.pdf", height=18, width=15)
+d
+dev.off()
+
+
+
+
+
+
+
+pdf(file="UMAP_renamedclusters.pdf", height=8.5, width=11)
+p<-DimPlot(human_face, reduction = "umap") + theme(aspect.ratio = 1)
+p1<-DimPlot(human_face, reduction = "umap", group.by = "orig.ident") + theme(aspect.ratio = 1)
+human_face$Idents<-human_face$seurat_clusters
+pct<-table(Idents(human_face), human_face$orig.ident)
+pct<-as.data.frame(pct)
+p2<-ggplot(pct, aes(x = Var2, y = Freq, fill = Var1)) + theme_bw(base_size = 15) + geom_col(position = "fill", width = 0.5) + xlab("Sample") + ylab("Proportion") + theme(legend.title = element_blank()) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+ theme(aspect.ratio = 1)
+p3<-ggplot(pct, aes(x = Var1, y = Freq, fill = Var2)) + theme_bw(base_size = 15) + geom_col(position = "fill", width = 0.5) + xlab("Cluster") + ylab("Proportion") + theme(legend.title = element_blank()) +  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+ theme(aspect.ratio = 1)
+(p | p3) / (p1 | p2) + plot_annotation("snRNAseq of All Samples")
+dev.off()
+
+saveRDS(human_face, file = "2_human_face_with_rep_data_renamed.rds")
+
+human_face$Idents<-Idents(human_face)
+levels<-data.frame(Idents(human_face))
+x<-unique(levels$Idents.human_face.)
+human_face.markers <- FindAllMarkers(human_face, only.pos = TRUE, test.use = "roc", min.pct = 0.25, logfc.threshold = 0.25)
+flw<-vector("list", length(x))
+for (val in x){
+flw[[val]]<-FindMarkers(human_face, ident.1 = val, min.diff.pct = 0.25, logfc.threshold = 0.25, test.use = "roc", only.pos = TRUE)
+assign(paste("clustermarkers", gsub(" ", "", val), sep=""), flw[[val]])
+write.table(data.frame(flw[[val]]), file=(paste("human_face_clustermarkers", gsub(" ", "", val), ".txt", sep="")), sep="\t")
+}
+standardmarkers<-c("AMELY", "DMP1", "BMP4", "SHH", "FGF4", "FGF8", "POU5F1", 'PITX2', 'PAX9', 'PAX3', 'BARX1', 'MSX1', 'MSX2', 'FCER1G', 'HEMGN', 'LEF1', 'CD24', 'CD59', 'CD38', 'CD44', 'THY1', 'ENG', 'ALX1', 'HOXA2', 'TP63', 'TFAP2A', 'PAX7', 'IRF6', 'MYC', 'SOX9')
+
+#cd24, 59, 38 are HSC markers
+#cd44, cd90, cd105 are MSC markers
+
+pdf(file="Seurat_all_combined_human_face_standard_markers_renamed.pdf", height=7.5, width=7.5)
+DimPlot(human_face, reduction = "umap", group.by="Idents")
+DimPlot(human_face, reduction = "umap", group.by = "orig.ident")
+for (featuremarker in standardmarkers){
+p<-print(FeaturePlot(human_face, features = featuremarker))
+p1<-print(VlnPlot(human_face, features = featuremarker, slot = "counts", log = TRUE, group.by="Idents"))
+(p + p1)
+}
+print(DoHeatmap(human_face, features = standardmarkers, group.by="Idents") )
+dev.off()
+markers<-ls(pattern="clustermarkers")
+pdf(file="human_face_markers_renamed.pdf")
+print(DimPlot(human_face, reduction = "umap"))
+for (val in markers){
+print(val)
+value<-get(val)
+features<-rownames( head(value[order(-value$avg_logFC),],5))
+for (genename in features){
+print(FeaturePlot(human_face, features = genename))
+print(VlnPlot(human_face, features = genename, slot = "counts", log = TRUE, group.by="Idents"))
+}
+#print(DoHeatmap(human_face, features = features, group.by="Idents") + NoLegend())
+}
+dev.off()
+
+
+
+
+
+human_face_all<-readRDS(file="2_human_face_with_rep_data_renamed.rds")
+human_face<-subset(human_face_all, idents="Epithelium")
+human_face <- FindNeighbors(human_face, dims = 1:15)
+human_face <- FindClusters(human_face, resolution = 0.1)
+human_face <- RunUMAP(human_face, dims = 1:15)
+
+convertMouseGeneList <- function(x){
+require("biomaRt")
+human = useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+mouse = useMart("ensembl", dataset = "mmusculus_gene_ensembl")
+genesV2 = getLDS(attributes = c("mgi_symbol"), filters = "mgi_symbol", values = x , mart = mouse, attributesL = c("hgnc_symbol"), martL = human, uniqueRows=T)
+mousex <- unique(genesV2[, 2])
+# Print the first 6 genes found to the screen
+print(head(mousex))
+return(mousex)
+}
+nodes<-c("ModuleEndothelium.txt", "ModulePerivascular.txt", "ModuleImmune.txt", "ModuleMesenchyme.txt", "ModuleEpithelium.txt")
+for (node in nodes){
+mod<-read.table(file=node, header=TRUE, sep="\t")
+new<-convertMouseGeneList(node$x)
+write.table(new, file=paste("Human", node, sep=""), sep="\t")
+}
+human_ekmarkers<-convertMouseGeneList(rownames(ekmarkers))
+
+human_face<-AddModuleScore(object=human_face, features=list(human_ekmarkers), pool = NULL, ctrl = 1000, name = "Human_EK", overwrite=TRUE, seed = 1, search = TRUE)
+
+pdf(file="Supplement_sc_incisor_based_module_scores_after_renaming.pdf", height=8.5, width=16)
+p<-DimPlot(human_face, reduction = "umap", group.by="Idents") + theme(aspect.ratio = 1)
+nodes<-list.files(pattern="HumanModule")
+for (node in nodes){
+mod<-read.table(file=node, header=TRUE, sep="\t")
+mod<-intersect(rownames(human_face), mod$x)
+print(node)
+print(length(mod))
+featurename<-gsub(".txt", "", gsub("HumanModule", "", node))
+modulename<-gsub(".txt", "", gsub("Human", "", node))
+human_face<-AddModuleScore(object=human_face, features=list(mod), bins=1, control=1000, name = featurename, seed = 1, search = TRUE)
+p<-DimPlot(human_face, reduction = "umap", group.by="seurat_clusters", pt.size=0.5) + theme(aspect.ratio = 1)
+f<-FeaturePlot(human_face, features =paste(featurename, "1", sep=""), cols=c('white', 'blue')) + theme(aspect.ratio = 1) + labs(title = "") 
+g<-VlnPlot(human_face, features =paste(featurename, "1", sep=""), slot = "counts", log = TRUE, group.by="seurat_clusters") + geom_boxplot(width=0.1,fill="white") + theme(aspect.ratio = 1) + labs(title = modulename) 
+print((p | f | g)+ plot_annotation(modulename))
+assign(modulename, mod)
+}
+allmods<-paste(gsub("HumanModule|.txt", "", nodes), "1", sep="")
+l<-DotPlot(human_face, features=allmods, group.by="seurat_clusters") + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + labs(y="Cluster Classification", x="Gene Module from Adult Incisor")
+(p | l)
+dev.off()
+
+pdf(file="Figure9.pdf", height=10, width=25)
+s<-DimPlot(human_face_all, reduction = "umap", group.by="Idents", pt.size=2.5) + theme(aspect.ratio = 1)
+p<-DimPlot(human_face, reduction = "umap", group.by="seurat_clusters", pt.size=2.5) + theme(aspect.ratio = 1)
+f<-FeaturePlot(human_face, features = "Human_EK1", cols=c('white', 'red')) + theme(aspect.ratio = 1) + labs(title = "Module Score of Enamel Knot Marker Genes") 
+g<-VlnPlot(human_face, features = "Human_EK1", slot = "counts",  group.by="seurat_clusters", pt.size = 0.05, ) + geom_boxplot(width=0.1,fill="white") + theme(aspect.ratio = 1) + labs(title = "") + geom_signif(comparisons = list(c("0", "1")), map_signif_level = TRUE, test = "t.test", textsize = 6)
+print((s/p)|((f|g)))
+dev.off()
+
