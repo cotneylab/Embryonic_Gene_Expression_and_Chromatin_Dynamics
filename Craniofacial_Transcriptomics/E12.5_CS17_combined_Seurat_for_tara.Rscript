@@ -1,0 +1,924 @@
+library(Seurat)
+library(ggplot2)
+library(magrittr)
+library(harmony)
+library(SingleCellExperiment)
+library(patchwork)
+library(ggrepel)
+library(tm)
+library("clusterProfiler")
+library("gplots")
+library("devtools")
+library("dplyr")
+library("ggplot2")
+library("AnnotationDbi")
+library("BiocParallel")
+library("RColorBrewer")
+library(DOSE)
+library("org.Hs.eg.db")
+library(enrichplot)
+library("ggupset")
+library(ggsignif)
+library("htmltools")
+library(Matrix)
+library(irlba)
+library(ggplot2) # Tidyverse is pre-installed, yay!
+library(dplyr)
+library(scico)
+set.seed(123)
+library(DropletUtils)
+library(readr)
+library(BUSpaRse)
+library(future)
+multicore(workers = 24)
+library(ggpointdensity)
+options(future.globals.maxSize = 8000 * 1024^2)
+library(ggpointdensity)
+
+load(file='~/cotney/one2one_ortho.Rdata') #stored as genesV2
+tr2g <- read_tsv("~/cotney/genome/mm10/kallisto_nucleus/mm10_nucleus_t2g.txt", col_names = c("transcript", "gene", "gene_symbol"))
+genes<-genesV2[which(genesV2$MGI.symbol %in% tr2g$gene_symbol),c(2,4)]
+genes[genes==""]<-NA
+colnames(genes)<-c("gene_symbol", 'gene_symbol_hs')
+tr2g<-tr2g[which(tr2g$gene_symbol %in% genes$gene_symbol),]
+tr2g<-merge(tr2g, genes, by='gene_symbol')
+tr2g<-unique(tr2g[grep('RNASEK-', tr2g$gene_symbol_hs, invert=TRUE),c('gene_symbol', 'gene_symbol_hs')])
+tr2g<-tr2g[grep('', tr2g$gene_symbol),]
+tr2g<-tr2g[grep('', tr2g$gene_symbol_hs),]
+name1<-NULL
+names<-c('E12_5_face_1', 'E12_5_face_2', 'E12_5_face_4')
+for (samplename in names){
+tab<-Read10X(data.dir=paste('/home/FCAM/jcotney/DATA/Multiome/NovaSeqRuns_CotneyLab_10x_June2022/cellranger_count_', samplename, '/outs/raw_feature_bc_matrix', sep=''))
+print(length(rownames(tab$`Gene Expression`)))
+print(length(unique(rownames(tab$`Gene Expression`))))
+tab$`Gene Expression`<-tab$`Gene Expression`[intersect(rownames(tab$`Gene Expression`), tr2g$gene_symbol),]
+print(length(rownames(tab$`Gene Expression`)))
+tr2g2<-intersect(tr2g$gene_symbol, rownames(tab$`Gene Expression`))
+tr2g3<-tr2g[which(tr2g$gene_symbol %in% tr2g2),]
+tr2g3<-tr2g3[!duplicated(tr2g3$gene_symbol),]
+tr2g3<-tr2g3[order(match(tr2g3$gene_symbol, rownames(tab$`Gene Expression`))),]
+print(dim(tr2g3))
+rownames(tab$`Gene Expression`)<-tr2g3[match(tr2g3$gene_symbol, rownames(tab$`Gene Expression`)),2]
+seu<-CreateSeuratObject(counts=tab$`Gene Expression`, project=samplename)
+saveRDS(seu, file=paste('mouseface_humangenes_', samplename, '.rds', sep=''))
+name1<-rbind(name1, rownames(seu))
+assign(samplename, seu)
+}
+name1<-unique(name1)
+names<-c('CS17_01', 'CS17_02', 'CS17_03')
+for (samplename in names){
+tab<-Read10X(data.dir=paste('//home/FCAM/ewentworth/cotney/rawdata/human/embryonic_craniofacial/multiome/', samplename, '/Cellranger_out/outs/raw_feature_bc_matrix', sep=''))
+seu<-CreateSeuratObject(counts=tab$`Gene Expression`, project=samplename)
+seu<-seu[name1,]
+saveRDS(seu, file=paste('humanface_humangenes_', samplename, '.rds', sep=''))
+assign(samplename, seu)
+}
+
+
+files<-list.files(pattern="humangenes")
+files<-files[grep("mouseface|humanface", files)]
+names<-NULL
+flw<-vector("list", length(files))
+for (filename in files){
+flw[[filename]]<-gsub(".rds|mouseface_humangenes_|humanface_humangenes_", "", filename)
+name<-readRDS(file=filename)
+names<-append(names, rownames(name))
+assign(flw[[filename]], name)
+}
+
+name<-merge(E12_5_face_1, y=c(E12_5_face_2, E12_5_face_4, CS17_01, CS17_02, CS17_03), add.cell.ids=c('E12_1#', 'E12_2#', 'E12_3#', 'CS17_1#', 'CS17_2#', 'CS17_3#'), project="embryonic_CF")
+name$stage<-gsub("_1|_2|_3|_4|_01|_02|_03", "", name$orig.ident)
+
+
+name<-RenameCells(name, new.names=gsub("_C", "C", gsub("_T", "T", gsub("_G", "G", gsub("_A", "A", Cells(name))))))
+DefaultAssay(name)<-"RNA"
+name[["percent.mt"]]<-PercentageFeatureSet(name, pattern="^MT-")
+name[["percent.rb"]]<-PercentageFeatureSet(name, pattern="^RN")
+pdf(file="qc.pdf", height=10, width=20)
+print(VlnPlot(name, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, pt.size = 0, group.by="orig.ident"))
+print(VlnPlot(name, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, pt.size = 0, group.by="stage"))
+dev.off()
+name <- subset(name, subset = nFeature_RNA > 200 & percent.mt < 10 & percent.rb < 20)
+pdf(file="qc_afterfiltering.pdf", height=10, width=20)
+print(VlnPlot(name, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, pt.size = 0, group.by="orig.ident"))
+print(VlnPlot(name, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, pt.size = 0, group.by="stage"))
+dev.off()
+saveRDS(name, file = "humangenes_1_combined_object_no_normalizionscaling.rds")
+
+options(future.globals.maxSize = 8000 * 1024^2)
+name <- NormalizeData(name, normalization.method='RC')
+name <- FindVariableFeatures(name, selection.method = "vst", nfeatures = 2000)
+top10 <- head(VariableFeatures(name), 20)
+pdf(file="combined_variable_features_plot.pdf")
+print(VariableFeaturePlot(name))
+plot1<-VariableFeaturePlot(name)
+print(LabelPoints(plot = plot1, points = top10, repel = TRUE))
+dev.off()
+s.genes <- cc.genes$s.genes
+g2m.genes <- cc.genes$g2m.genes
+name$organism<-c('mouse')
+name$organism[grep('CS', name$orig.ident)]<-c('human')
+
+name<-CellCycleScoring(name, s.features=s.genes, g2m.features=g2m.genes, set.ident=TRUE)
+name$CC.Difference <- name$S.Score - name$G2M.Score
+name <- ScaleData(name, features = rownames(name))
+mouse_face<-name
+mouse_face <- RunPCA(mouse_face, features = rownames(name))
+pdf(file="dimensions.pdf")
+print(mouse_face[["pca"]], dims = 1:5, nfeatures = 5)
+VizDimLoadings(mouse_face, dims = 1:2, reduction = "pca")
+DimPlot(mouse_face, reduction = "pca", group.by='stage')
+DimHeatmap(mouse_face, dims = 1, cells = 500, balanced = TRUE)
+DimHeatmap(mouse_face, dims = 1:15, cells = 500, balanced = TRUE)
+#mouse_face <- JackStraw(mouse_face, num.replicate = 100)
+#mouse_face <- ScoreJackStraw(mouse_face, dims = 1:20)
+#JackStrawPlot(mouse_face, dims = 1:15)
+ElbowPlot(mouse_face)
+dev.off()
+
+mouse_face$organism<-c('mouse')
+mouse_face$organism[grep('CS', mouse_face$orig.ident)]<-c('human')
+mouse_face <-RunHarmony(mouse_face, group.by.vars='stage')
+print(mouse_face[["harmony"]], dims = 1:5, nfeatures = 5)
+VizDimLoadings(mouse_face, dims = 1:2, reduction = "harmony")
+DimPlot(mouse_face, reduction = "harmony", group.by='stage')
+dev.off()
+
+mouse_face <- FindNeighbors(mouse_face, dims = 1:8, reduction='harmony')
+mouse_face <- FindClusters(mouse_face, resolution = 0.2)
+table(mouse_face$seurat_clusters, mouse_face$organism)
+mouse_face <- RunUMAP(mouse_face, dims = 1:8, reduction="harmony")
+
+mouse_face$Idents<-mouse_face$seurat_clusters
+
+pdf(file="humangenes_initial_UMAP_allsamples.pdf")
+DimPlot(mouse_face, reduction = "umap", group.by="seurat_clusters", pt.size=0.5, raster=TRUE) + theme(aspect.ratio = 1)
+DimPlot(mouse_face, reduction = "umap", group.by="stage", pt.size=0.5, raster=TRUE) + theme(aspect.ratio = 1)
+DimPlot(mouse_face, reduction = "umap", group.by="orig.ident", pt.size=0.5, raster=TRUE) + theme(aspect.ratio = 1)
+dev.off()
+
+standardmarkers<-c('PITX1', 'BARX1', 'BARX2', 'SHH', 'WNT10A', 'WIF1', 'FCER1G', 'HBA1', 'LEF1', 'ENG', 'TP63',  'PAX7', 'IRF6', 'EPCAM', 'SOX10', 'CDH5', 'ELAVL3', 'WNT5A', 'WNT3A', 'EGR1', 'CLDN10', 'IGFBP5', 'GJB5', 'PIEZO2', 'FGF3', 'FGF10', 'GLI1', 'THY1', 'SOX9', 'FOXD1', 'SMOC2', 'SYT6', 'TAC1', 'SFRP2', 'MCAM', 'ACTA2', 'NEBL')
+
+##OCT4, Nanog is for stem cells, NESTIN is neural progenitors
+f <- DimPlot(mouse_face, reduction="umap", group.by="seurat_clusters", pt.size=1.5, label.size=14) + theme(legend.text=element_text(size=15)) + theme(aspect.ratio = 1)
+g <- DotPlot(mouse_face, features = standardmarkers, group.by="seurat_clusters", split.by='organism') + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + theme(aspect.ratio = 1)
+pdf(file="humangenes_StandardMarkerGenesDotPlot.pdf", height=15, width=25)
+DotPlot(mouse_face, features = standardmarkers, group.by="seurat_clusters", split.by='organism') + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + theme(aspect.ratio = 1)
+VlnPlot(mouse_face, features = standardmarkers, group.by="seurat_clusters", split.by='organism') + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + theme(aspect.ratio = 1)
+DotPlot(mouse_face, features = standardmarkers, group.by="seurat_clusters") + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + theme(aspect.ratio = 1)
+dev.off()
+
+
+saveRDS(mouse_face, file = "1_humangenes_mouse_face_with_rep_data.rds")
+
+x<-levels(unique(mouse_face$seurat_clusters))
+f<-c()
+flw<-vector("list", length(x))
+background <- bitr(rownames(mouse_face), fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Hs.eg.db")
+data2<-NULL
+for (val in x){
+print(val)
+flw[[val]]<-FindMarkers(mouse_face, ident.1 = val, min.pct=0.10, logfc.threshold=0.1, max.cells.per.ident=400)
+y<-as.data.frame(flw[[val]])
+y<-y[which(y$p_val_adj <= 0.05 & y$avg_log2FC >= 0.25),]
+assign(gsub(" |\\+", "", paste("clustermarkers", val, sep="")), flw[[val]])
+print("It's GO time")
+y2 <- bitr(rownames(y), fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Hs.eg.db")
+
+value_bp <- enrichGO(gene = y2$ENTREZID, universe = background$ENTREZID, OrgDb = org.Hs.eg.db, keyType = 'ENTREZID', readable = T, ont = "BP", qvalueCutoff = 0.05, pAdjustMethod = "bonferroni")
+print("It's DO time")
+value_cc <- enrichDGN(y2$ENTREZID)
+value_bp1<-clusterProfiler::simplify(value_bp)
+value_bp1<-as.data.frame(value_bp1)
+value_cc1<-as.data.frame(value_cc)
+write.table(data.frame(flw[[val]]), file=(gsub("/", "_", gsub(" ", "", paste("mouse_face_clustermarkers", val, ".txt", sep="")))), sep="\t")
+data<-as.data.frame(WhichCells(object=mouse_face, ident=val))
+data[,2]<-value_bp1[1,2]
+data[,3]<-value_cc[1,2]
+colnames(data)<-c("Cell", "GO", "ClinicalCorrelate")
+data2<-rbind(data2, data)
+}
+rownames(data2)<-data2[,1]
+mouse_face<-AddMetaData(mouse_face, metadata=data2)
+mouse_face$Cell<-NULL
+saveRDS(mouse_face, file = "1_humangenes_mouse_face_with_rep_data.rds")
+
+
+pdf(file="human_face_UMAP_QC_originalclusters.pdf", height=10, width=10)
+#print(VlnPlot(mouse_face, features = c("nFeature_RNA"), pt.size = 0, group.by="orig.ident"))
+#print(VlnPlot(mouse_face, features = c("nCount_RNA"), pt.size = 0, group.by="orig.ident"))
+#print(VlnPlot(mouse_face, features = c("percent.mt"), pt.size = 0, group.by="orig.ident"))
+print(VlnPlot(mouse_face, features = c("nFeature_RNA"), pt.size = 0, group.by="stage"))
+print(VlnPlot(mouse_face, features = c("nCount_RNA"), pt.size = 0, group.by="stage"))
+print(VlnPlot(mouse_face, features = c("percent.mt"), pt.size = 0, group.by="stage"))
+DimPlot(mouse_face, pt.size = 0.1, reduction = "umap", raster=TRUE) + theme(aspect.ratio = 1)
+#DimPlot(mouse_face, pt.size = 0.1, reduction = "umap", group.by = "orig.ident", raster=TRUE) + theme(aspect.ratio = 1)
+#ggplot(pct, aes(x = Var2, y = Freq, fill = Var1)) + theme_bw(base_size = 15) + geom_col(position = "fill", width = 0.5) + xlab("Stage") + ylab("Proportion") + theme(legend.title = element_blank()) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+ggplot(pct, aes(x = Var1, y = Freq, fill = Var2)) + theme_bw(base_size = 15) + geom_col(position = "fill", width = 0.5) + xlab("Cluster") + ylab("Proportion") + theme(legend.title = element_blank()) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+DimPlot(mouse_face, reduction = "umap", pt.size = 0.1, group.by = "stage", raster=TRUE) + theme(aspect.ratio = 1)
+DimPlot(mouse_face, reduction = "umap", pt.size = 0.1, group.by = "GO", raster=TRUE) + theme(aspect.ratio = 1)
+DimPlot(mouse_face, reduction = "umap", pt.size = 0.1, group.by = "ClinicalCorrelate", raster=TRUE) + theme(aspect.ratio = 1)
+dev.off()
+
+
+#sox10 is PNS progenitor
+#sox2 is a cns progenitor; RMST is a co-sox2 gene
+#elavl3 is a cns neuron
+#six1 PHOX2B TBX2 TBX3 is a pns neuron
+#sensory neuron progenitors are marked by NEUROG1, NEUROG2, NEUROD1
+#mature sensory neurons are marked by ELAVL3, AVIL
+#essentially, neural crest is sox10+/Six1+ and the central nervous system is elavl3+/sox2+. 
+markergenes<-c('SOX10', 'SOX2', 'ELAVL2', 'SIX1', 'PHOX2B', 'TBX2', 'TBX3')
+#these spinal cord markers go from dorsal -> ventral based on the human neural tube paper, with sox2 serving to mark all cns cells
+markergenes2<-c('RMST', 'SOX10', 'PHOX2B', 'ELAVL3', 'SIX1', 'TBX2', 'TBX3', 'NEUROG1', 'NEUROG2', 'LMX1A', 'MSX1', 'MSX2', 'PAX3', 'WNT1', 'IRX3', 'IRX5', 'OLIG3', 'PAX6', 'ASCL1', 'GBX2', 'GSX2', 'PAX7', 'DBX1', 'SP8', 'NKX6-2', 'PRDM12', 'FOXN4', 'NKX6-1', 'OLIG2', 'NKX2-2', 'NKX2-8', 'ARX', 'FOXA2', 'LMX1B', 'SHH')
+
+f <- DimPlot(mouse_face, reduction="umap", group.by="Idents", pt.size=1.5, label.size=14) + theme(legend.text=element_text(size=15)) + theme(aspect.ratio = 1)
+g2<-DotPlot(mouse_face, features = markergenes2, group.by="seurat_clusters") + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + theme(aspect.ratio = 1)
+g<-DotPlot(mouse_face, features = markergenes, group.by="seurat_clusters") + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + theme(aspect.ratio = 1)
+
+pdf(file="humangenes_CNCC_StandardMarkerGenesDotPlot.pdf", height=15, width=25)
+for (gene in markergenes2){
+#a<- FeaturePlot(mouse_face, features = gene, combine = TRUE, cols=c('lightgrey', 'blue'))  + theme(aspect.ratio = 1)
+#b<-VlnPlot(mouse_face, features = gene, log = TRUE, group.by="seurat_clusters") + theme(aspect.ratio = 1)
+#print(a|b)
+}
+g2
+g
+dev.off()
+
+
+
+
+Idents(mouse_face)<-mouse_face$seurat_clusters
+mouse_face<-RenameIdents(mouse_face, `0`='Mesenchyme', `1`='Mesenchyme', `2`='Mesenchyme', `3`='Epithelium', `4`='Neural Progenitor Cells', `5`='Mesenchyme', `6`='Blood Cells', `7`='Neural Progenitor Cells', `8`='Mesenchyme', `9`='Endothelium', `10`='Other Blood Cells', `11`='Muscle Progenitor Cells')
+
+mouse_face$Idents<-Idents(mouse_face)
+
+pdf(file="UMAP_renamed.pdf", height=12, width=20)
+p<-DimPlot(mouse_face, reduction = "umap", group.by="Idents", label=TRUE) + theme(aspect.ratio = 1)
+s<-DimPlot(mouse_face, reduction = "umap", group.by = "GO", label=TRUE) + theme(aspect.ratio = 1)
+p|s
+dev.off()
+x<-unique(Idents(mouse_face))
+f<-c()
+flw<-vector("list", length(x))
+background <- bitr(rownames(mouse_face), fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Hs.eg.db")
+data2<-NULL
+
+mouse_face[["RNA"]]@counts<-as.matrix(mouse_face[["RNA"]]@counts)+1
+
+x<-levels(Idents(mouse_face))
+f<-c()
+flw<-vector("list", length(x))
+background <- bitr(rownames(mouse_face), fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Hs.eg.db")
+data2<-NULL
+for (val in x){
+print(val)
+flw[[val]]<-FindMarkers(mouse_face, ident.1 = val, min.pct=0.10, logfc.threshold=0.1, max.cells.per.ident=400)
+y<-as.data.frame(flw[[val]])
+y<-y[which(y$p_val_adj <= 0.05 & y$avg_log2FC >= 0.25),]
+assign(gsub(" |\\+", "", paste("clustermarkers", val, sep="")), flw[[val]])
+print("It's GO time")
+y2 <- bitr(rownames(y), fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Hs.eg.db")
+
+value_bp <- enrichGO(gene = y2$ENTREZID, universe = background$ENTREZID, OrgDb = org.Hs.eg.db, keyType = 'ENTREZID', readable = T, ont = "BP", qvalueCutoff = 0.05, pAdjustMethod = "bonferroni")
+print("It's DO time")
+value_cc <- enrichDGN(y2$ENTREZID)
+value_bp1<-clusterProfiler::simplify(value_bp)
+value_bp1<-as.data.frame(value_bp1)
+value_cc1<-as.data.frame(value_cc)
+write.table(data.frame(flw[[val]]), file=(gsub("/", "_", gsub(" ", "", paste("mouse_face_clustermarkers", val, ".txt", sep="")))), sep="\t")
+data<-as.data.frame(WhichCells(object=mouse_face, ident=val))
+data[,2]<-value_bp1[1,2]
+data[,3]<-value_cc[1,2]
+colnames(data)<-c("Cell", "GO", "ClinicalCorrelate")
+data2<-rbind(data2, data)
+}
+rownames(data2)<-data2[,1]
+mouse_face<-AddMetaData(mouse_face, metadata=data2)
+mouse_face$Cell<-NULL
+
+
+pdf(file="humangenes_UMAP_QC_annotatedclusters.pdf", height=10, width=10)
+print(VlnPlot(mouse_face, features = c("nFeature_RNA"), pt.size = 0, group.by="stage"))
+print(VlnPlot(mouse_face, features = c("nCount_RNA"), pt.size = 0, group.by="stage"))
+print(VlnPlot(mouse_face, features = c("percent.mt"), pt.size = 0, group.by="stage"))
+DimPlot(mouse_face, reduction = "umap", group.by = "organism") + theme(aspect.ratio = 1)
+DimPlot(mouse_face, reduction = "umap", group.by="Idents") + theme(aspect.ratio = 1)
+DimPlot(mouse_face, reduction = "umap", group.by = "GO") + theme(aspect.ratio = 1)
+DimPlot(mouse_face, reduction = "umap", group.by = "ClinicalCorrelate") + theme(aspect.ratio = 1)
+a<- FeaturePlot(mouse_face, features = c('EBF3', 'EBF2'), combine = TRUE, cols=c('lightgrey', 'blue'), split.by='organism')  + theme(aspect.ratio = 1)
+b<-VlnPlot(mouse_face, features = c('EBF3', 'EBF2'), split.by='organism', log = TRUE, group.by="seurat_clusters") + theme(aspect.ratio = 1)
+print(a/b)
+pct<-table(mouse_face$Idents, mouse_face$orig.ident)
+pct<-as.data.frame(pct)
+ggplot(pct, aes(x = Var2, y = Freq, fill = Var1)) + theme_bw(base_size = 15) + geom_col(position = "fill", width = 0.5) + xlab("Sample") + ylab("Proportion") + theme(legend.title = element_blank()) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+ggplot(pct, aes(x = Var1, y = Freq, fill = Var2)) + theme_bw(base_size = 15) + geom_col(position = "fill", width = 0.5) + xlab("Cluster") + ylab("Proportion") + theme(legend.title = element_blank()) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+DimPlot(mouse_face, reduction = "umap", group.by = "stage") + theme(aspect.ratio = 1)
+pct<-table(mouse_face$Idents, mouse_face$organism)
+pct<-as.data.frame(pct)
+ggplot(pct, aes(x = Var2, y = Freq, fill = Var1)) + theme_bw(base_size = 15) + geom_col(position = "fill", width = 0.5) + xlab("Stage") + ylab("Proportion") + theme(legend.title = element_blank()) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+ggplot(pct, aes(x = Var1, y = Freq, fill = Var2)) + theme_bw(base_size = 15) + geom_col(position = "fill", width = 0.5) + xlab("Cluster") + ylab("Proportion") + theme(legend.title = element_blank()) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+DimPlot(mouse_face, reduction = "umap", group.by = "seurat_clusters") + theme(aspect.ratio = 1)
+DimPlot(mouse_face, reduction = "umap", group.by = "GO") + theme(aspect.ratio = 1)
+pct<-table(mouse_face$seurat_clusters, mouse_face$orig.ident)
+pct<-as.data.frame(pct)
+ggplot(pct, aes(x = Var2, y = Freq, fill = Var1)) + theme_bw(base_size = 15) + geom_col(position = "fill", width = 0.5) + xlab("Sample") + ylab("Proportion") + theme(legend.title = element_blank()) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+ggplot(pct, aes(x = Var1, y = Freq, fill = Var2)) + theme_bw(base_size = 15) + geom_col(position = "fill", width = 0.5) + xlab("Cluster") + ylab("Proportion") + theme(legend.title = element_blank()) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+DimPlot(mouse_face, reduction = "umap", group.by = "stage") + theme(aspect.ratio = 1)
+pct<-table(mouse_face$seurat_clusters, mouse_face$organism)
+pct<-as.data.frame(pct)
+ggplot(pct, aes(x = Var2, y = Freq, fill = Var1)) + theme_bw(base_size = 15) + geom_col(position = "fill", width = 0.5) + xlab("Stage") + ylab("Proportion") + theme(legend.title = element_blank()) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+ggplot(pct, aes(x = Var1, y = Freq, fill = Var2)) + theme_bw(base_size = 15) + geom_col(position = "fill", width = 0.5) + xlab("Cluster") + ylab("Proportion") + theme(legend.title = element_blank()) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+dev.off()
+saveRDS(mouse_face, file = "2_humangenes_mouse_face_annotated.rds")
+
+
+
+a<- FeaturePlot(mouse_face, features = 'EBF3', combine = TRUE, cols=c('lightgrey', 'blue'), split.by='organism')  + theme(aspect.ratio = 1)
+b<-VlnPlot(mouse_face, features = 'EBF3', log = TRUE, group.by='Idents', split.by='organism') + theme(aspect.ratio = 1)
+print(a/b)
+dev.off()
+
+
+standardmarkers<-c('PITX1', 'BARX1', 'BARX2', 'SHH', 'WNT10A', 'WIF1', 'FCER1G', 'HBA1', 'LEF1', 'ENG', 'TP63',  'PAX7', 'IRF6', 'EPCAM', 'SOX10', 'CDH5', 'ELAVL3', 'WNT5A', 'WNT3A', 'EGR1', 'CLDN10', 'IGFBP5', 'GJB5', 'PIEZO2', 'FGF3', 'FGF10', 'GLI1', 'THY1', 'SOX9', 'FOXD1', 'SMOC2', 'SYT6', 'TAC1', 'SFRP2', 'MCAM', 'ACTA2', 'NEBL', 'SCA1', 'ITB1', 'CD44', 'NT5E', 'EGLN', 'VCAM')
+##OCT4, Nanog is for stem cells, NESTIN is neural progenitors
+f <- DimPlot(mouse_face, reduction="umap", group.by="seurat_clusters", pt.size=1.5, label.size=14) + theme(legend.text=element_text(size=15)) + theme(aspect.ratio = 1)
+g2 <- DotPlot(mouse_face, features = standardmarkers, group.by="seurat_clusters") + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + theme(aspect.ratio = 1)
+pdf(file="humangenes_StandardMarkerGenesDotPlot.pdf", height=15, width=25)
+g2
+dev.off()
+
+
+
+#sox10 is PNS progenitor
+#sox2 is a cns progenitor; RMST is a co-sox2 gene
+#elavl3 is a cns neuron
+#six1 PHOX2B TBX2 TBX3 is a pns neuron
+#sensory neuron progenitors are marked by NEUROG1, NEUROG2, NEUROD1
+#mature sensory neurons are marked by ELAVL3, AVIL
+#essentially, neural crest is sox10+/Six1+ and the central nervous system is elavl3+/sox2+. 
+markergenes<-c('SOX10', 'SOX2', 'ELAVL2', 'SIX1', 'PHOX2B', 'TBX2', 'TBX3')
+#these spinal cord markers go from dorsal -> ventral based on the human neural tube paper, with sox2 serving to mark all cns cells
+markergenes2<-c('RMST', 'SOX10', 'PHOX2B', 'ELAVL3', 'SIX1', 'TBX2', 'TBX3', 'NEUROG1', 'NEUROG2', 'LMX1A', 'MSX1', 'MSX2', 'PAX3', 'WNT1', 'IRX3', 'IRX5', 'OLIG3', 'PAX6', 'ASCL1', 'GBX2', 'GSX2', 'PAX7', 'DBX1', 'SP8', 'NKX6-2', 'PRDM12', 'FOXN4', 'NKX6-1', 'OLIG2', 'NKX2-2', 'NKX2-8', 'ARX', 'FOXA2', 'LMX1B', 'SHH')
+f <- DimPlot(mouse_face, reduction="umap", group.by="Idents", pt.size=1.5, label.size=14) + theme(legend.text=element_text(size=15)) + theme(aspect.ratio = 1)
+g2<-DotPlot(mouse_face, features = markergenes2, group.by="seurat_clusters") + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + theme(aspect.ratio = 1)
+pdf(file="humangenes_CNCC_StandardMarkerGenesDotPlot.pdf", height=15, width=25)
+
+g2
+dev.off()
+
+
+
+
+saveRDS(mouse_face, file = "2_humangenes_mouse_face_annotated.rds")
+
+
+
+mesenchyme<-subset(mouse_face, idents=c("Mesenchyme"))
+name<-mesenchyme
+name <- FindVariableFeatures(name, selection.method = "vst", nfeatures = 2000)
+top10 <- head(VariableFeatures(name), 20)
+pdf(file="mesenchyme_variable_features_plot.pdf")
+print(VariableFeaturePlot(name))
+plot1<-VariableFeaturePlot(name)
+print(LabelPoints(plot = plot1, points = top10, repel = TRUE))
+dev.off()
+s.genes <- cc.genes$s.genes
+g2m.genes <- cc.genes$g2m.genes
+name<-CellCycleScoring(name, s.features=s.genes, g2m.features=g2m.genes, set.ident=TRUE)
+name$CC.Difference <- name$S.Score - name$G2M.Score
+name <- ScaleData(name, vars.to.regress=c("CC.Difference") features = VariableFeatures(name))
+mesenchyme<-name
+mesenchyme <- RunPCA(mesenchyme, features = VariableFeatures(name))
+pdf(file="mesenchyme_dimensions.pdf")
+print(mesenchyme[["pca"]], dims = 1:5, nfeatures = 5)
+VizDimLoadings(mesenchyme, dims = 1:2, reduction = "pca")
+#mesenchyme <- JackStraw(mesenchyme, num.replicate = 100)
+#mesenchyme <- ScoreJackStraw(mesenchyme, dims = 1:20)
+#JackStrawPlot(mesenchyme, dims = 1:15)
+ElbowPlot(mesenchyme)
+dev.off()
+mesenchyme<-RunHarmony(mesenchyme, group.by.vars='stage')
+mesenchyme <- FindNeighbors(mesenchyme, dims = 1:5, reduction='harmony')
+mesenchyme <- FindClusters(mesenchyme, resolution = 0.25)
+mesenchyme <- RunUMAP(mesenchyme, dims = 1:5, reduction="harmony")
+Idents(mesenchyme)<-mesenchyme$seurat_clusters
+saveRDS(mesenchyme, file = "humangenes_mesenchyme_only_numbered_clusters.rds")
+#https://www.nature.com/articles/s41467-022-32490-y.pdf
+#lhx6, tfap2b, msx1, runx2, mdk, sdc1 label dental mesenchyme
+#osr2 is strong in the dental mesenchyme
+#crym, egr3, fgf3 are dental papilla
+#lmo1 is coronal papilla at e16.5
+#fst is apical papilla at e16.5
+#lepr is lateral follicle
+#aldh1a2 is apical follicle
+#sox10 and dhh is schwann cell markers
+#acta2, cspg4, pdgfrb is perivascular cells
+#col1a1 is for bone development
+#Acan, Cilp, Prg4, Sox9, Col2a1 are for cartilage
+#NOG, BMP2, BMP7 marks meckel's in mouse
+pdf(file="humangenes_mesenchyme_standardmarkers_dotplot.pdf", height=18, width=18)
+standardmarkers<-c('SDC1', 'PAX9', 'ELAVL3', 'OSR2', 'RUNX1', 'RUNX2', 'TWIST1', 'TWIST2', 'MSX1', 'MSX2', 'COL1A1', 'ACAN', 'DSP', 'FGF3', 'FGF10', 'PRG4', 'SOX9', 'COL2A1', 'NOG', 'BMP2', 'BMP7')
+DotPlot(mesenchyme, features=standardmarkers)
+dev.off()
+
+x<-levels(unique(Idents(mesenchyme)))
+f<-c()
+flw<-vector("list", length(x))
+background <- bitr(rownames(mesenchyme), fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Hs.eg.db")
+data2<-NULL
+for (val in x){
+print(val)
+flw[[val]]<-FindMarkers(mesenchyme, ident.1 = val, min.pct=0.10, logfc.threshold=0.1, max.cells.per.ident=400)
+y<-as.data.frame(flw[[val]])
+y<-y[which(y$p_val_adj <= 0.05 & y$avg_log2FC >= 0.5),]
+y<-y[order(-y$avg_log2FC),]
+data<-as.data.frame(WhichCells(object=mesenchyme, ident=val))
+data[,4]<-paste(rownames(y)[1],rownames(y)[2], rownames(y)[3], sep=', ')
+colnames(data)<-c("Cell", "HighestMarker")
+data2<-rbind(data2, data)
+}
+rownames(data2)<-data2[,1]
+mesenchyme<-AddMetaData(mesenchyme, metadata=data2)
+mesenchyme$Cell<-NULL
+saveRDS(mesenchyme, file = "humangenes_mesenchyme_only_numbered_clusters.rds")
+
+pdf(file="humangenes_mesenchyme_UMAP.pdf", height=18, width=18)
+print(VlnPlot(mesenchyme, features = c("nFeature_RNA"), pt.size = 0, group.by="stage"))
+print(VlnPlot(mesenchyme, features = c("nCount_RNA"), pt.size = 0, group.by="stage"))
+print(VlnPlot(mesenchyme, features = c("percent.mt"), pt.size = 0, group.by="stage"))
+DimPlot(mesenchyme, reduction = "umap", group.by = "HighestMarker") + theme(aspect.ratio = 1)
+DimPlot(mesenchyme, reduction = "umap", group.by="seurat_clusters") + theme(aspect.ratio = 1)
+DimPlot(mesenchyme, reduction = "umap", group.by = "GO") + theme(aspect.ratio = 1)
+DimPlot(mesenchyme, reduction = "umap", group.by = "ClinicalCorrelate") + theme(aspect.ratio = 1)
+a<- FeaturePlot(mesenchyme, features = c('EBF3'), combine = TRUE, cols=c('lightgrey', 'blue'), split.by='organism')  + theme(aspect.ratio = 1)
+b<-VlnPlot(mesenchyme, features = c('EBF3'), split.by='organism', log = TRUE, group.by="seurat_clusters") + theme(aspect.ratio = 1)
+print(a|b)
+dev.off()
+
+Idents(mesenchyme)<-mesenchyme$seurat_clusters
+mesenchyme<-RenameIdents(mesenchyme, `0`='Mesenchyme_0', `2`='Mesenchyme_2', `3`='Mesenchyme_3', `4`='Mesenchyme_4', `1`='Mesenchyme_1', `5`='Mesenchyme_5', `6`='Neural Progenitor Cells', `7`='Mesenchyme_6')
+
+
+standardmarkers<-c('RUNX2', 'RUNX1', 'PAX9', 'SDC1', 'ECT2', 'COL1A1', 'TWIST1', 'ELAVL3')
+pdf(file="humangenes_mesenchyme_standardmarkers_dotplot_annotated.pdf", height=18, width=18)
+DotPlot(mesenchyme, features=standardmarkers)
+VlnPlot(mesenchyme, features=c('EBF3'), split.by='organism')
+VlnPlot(mesenchyme, features=standardmarkers, split.by='organism')
+dev.off()
+
+
+mesenchyme$Idents<-Idents(mesenchyme)
+
+pdf(file="mesenchyme_module_scores_HUBGENES.pdf", height=8.5, width=16)
+p<-DimPlot(mesenchyme, reduction = "umap", group.by="Idents") + theme(aspect.ratio = 1)
+nodes<-list.files(pattern="Nodes")
+for (node in nodes){
+g1<-read.table(file=node, sep=",", header=TRUE)
+g1<-g1[g1$HUB==1,]
+mod<-as.data.frame(g1$SYMID)
+colnames(mod)<-c("SYMID")
+mod<-intersect(mod$SYMID, rownames(mesenchyme))
+modulename<-gsub("_Nodes.csv", "", node)
+colorname<-gsub("1|2|3|4|5|6|7|8|9|0", "", modulename)
+mesenchyme<-AddModuleScore(object=mesenchyme, features=list(mod), bins=1, control=1000, name = modulename, seed = 1, search = TRUE, overwrite=TRUE)
+p<-DimPlot(mesenchyme, reduction = "umap", group.by="Idents", pt.size=2.5) + theme(aspect.ratio = 1)
+f<-FeaturePlot(mesenchyme, features =paste(modulename, "1", sep=""), cols=c('white', "blue")) + theme(aspect.ratio = 1) + labs(title = "") 
+g<-VlnPlot(mesenchyme, features =paste(modulename, "1", sep=""), slot = "counts", log = TRUE, group.by="Idents", pt.size = 0.05) + geom_boxplot(width=0.1,fill="white") + theme(aspect.ratio = 1) + labs(title = modulename) + geom_signif(comparisons = list(c("Mesenchyme_0", "Mesenchyme_1"), c("Neural Progenitor Cells", "Mesenchyme_0"), c("Mesenchyme_0", "Mesenchyme_2"), c("Mesenchyme_0", "Mesenchyme_3"), c("Mesenchyme_0", "Mesenchyme_4"), c("Mesenchyme_0", "Mesenchyme_5", c("Mesenchyme_0", "Mesenchyme_6"))), map_signif_level = TRUE, textsize = 4, annotation="*")
+print((p | f | g)+ plot_annotation(modulename))
+assign(paste(modulename, "module", sep=""), mod)
+}
+dev.off()
+pdf(file="mesenchyme_module_scores_dotplot_HUBGENES.pdf", height=8.5, width=16)
+rm(modulename)
+allmods<-gsub("module", "", paste(ls(pattern="module"), "1", sep=""))
+allmods<-allmods[grep('bisque|black|darkgreen|lightyellow|darkslateblue|tan', allmods)]
+DotPlot(mesenchyme, features=allmods, group.by="Idents", cols=c('blue', "red")) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + labs(y="Cluster Classification", x="Gene Module from WGCNA")
+VlnPlot(mesenchyme, features=allmods, group.by="Idents", split.by='organism') + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + labs(y="Cluster Classification", x="Gene Module from WGCNA")
+dev.off()
+
+
+mes2<-subset(mesenchyme, idents=c('Mesenchyme_0', 'Mesenchyme_1', 'Mesenchyme_2', 'Mesenchyme_3', 'Mesenchyme_4', 'Mesenchyme_5', 'Mesenchyme_6'))
+hox<-rownames(mesenchyme)[grep('HOX', rownames(mesenchyme))]
+hox<-hox[grep('PHOX|SHOX', hox, invert=TRUE)]
+pdf(file="mesenchyme_HOXGenes_dotplot.pdf", height=8.5, width=16)
+DotPlot(mes2, features=hox) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + labs(y="Cluster Classification")
+dev.off()
+
+saveRDS(mesenchyme, file = "humangenes_mesenchyme_only_annotated.rds")
+
+
+
+mesenchyme$nums<-paste('Mesenchyme', mesenchyme$seurat_clusters, sep='_')
+
+pdf(file="EBF3_mesenchyme.pdf", height=36, width=18)
+a<-FeaturePlot(mesenchyme, features = c('EBF3'), combine = TRUE, cols=c('lightgrey', 'blue'), split.by='organism')  + theme(aspect.ratio = 1)
+d<-VlnPlot(mesenchyme, group.by='seurat_clusters', features = c('EBF3'), split.by='organism', log = TRUE, pt.size=0) + theme(aspect.ratio = 1)
+e<-VlnPlot(mesenchyme, features = c('EBF3'), split.by='organism', log = TRUE, pt.size=0) + theme(aspect.ratio = 1)
+print(a/(d|e))
+a<-FeaturePlot(mouse_face, features = c('EBF3'), combine = TRUE, cols=c('lightgrey', 'blue'), split.by='organism')  + theme(aspect.ratio = 1)
+d<-VlnPlot(mouse_face, group.by='seurat_clusters', features = c('EBF3'), split.by='organism', log = TRUE, pt.size=0) + theme(aspect.ratio = 1)
+e<-VlnPlot(mouse_face, features = c('EBF3'), split.by='organism', log = TRUE, pt.size=0) + theme(aspect.ratio = 1)
+print(a/(d|e))
+dev.off()
+pdf(file="EBF2_mesenchyme.pdf", height=36, width=18)
+a<-FeaturePlot(mesenchyme, features = c('EBF2'), combine = TRUE, cols=c('lightgrey', 'blue'), split.by='organism')  + theme(aspect.ratio = 1)
+d<-VlnPlot(mesenchyme, group.by='seurat_clusters', features = c('EBF2'), split.by='organism', log = TRUE, pt.size=0) + theme(aspect.ratio = 1)
+e<-VlnPlot(mesenchyme, features = c('EBF2'), split.by='organism', log = TRUE, pt.size=0) + theme(aspect.ratio = 1)
+print(a/(d|e))
+a<-FeaturePlot(mouse_face, features = c('EBF2'), combine = TRUE, cols=c('lightgrey', 'blue'), split.by='organism')  + theme(aspect.ratio = 1)
+d<-VlnPlot(mouse_face, group.by='seurat_clusters', features = c('EBF2'), split.by='organism', log = TRUE, pt.size=0) + theme(aspect.ratio = 1)
+e<-VlnPlot(mouse_face, features = c('EBF2'), split.by='organism', log = TRUE, pt.size=0) + theme(aspect.ratio = 1)
+print(a/(d|e))
+dev.off()
+
+Idents(mesenchyme)<-paste0(mesenchyme$organism, '_', Idents(mesenchyme))
+DEGs<-FindAllMarkers(mesenchyme, test.use="DESeq2", min.pct=0.1, max.cells.per.ident=200, logfc.threshold=0.1, random.seed=3)
+write.table(DEGs, file='Mesenchyme_DEGs_HvM.txt', sep='\t', row.names=F, col.names=T, quote=F)
+
+
+
+
+x<-levels(unique(Idents(mesenchyme)))
+for (val in x){
+tab<-subset(mesenchyme, idents=val)
+Idents(tab)<-tab$organism
+tab2<-FindAllMarkers(tab, min.pct=0.10, logfc.threshold=0.05, max.cells.per.ident=100, test.use="DESeq2", only.pos=TRUE)
+write.table(tab2, file=paste0(val, '_DEGs_HvM.txt'), sep='\t', row.names=F, col.names=T, quote=F)
+}
+
+
+
+
+
+epithelium<-subset(mouse_face, idents=c("Epithelium"))
+name<-epithelium
+name <- FindVariableFeatures(name, selection.method = "vst", nfeatures = 2000)
+top10 <- head(VariableFeatures(name), 20)
+pdf(file="epithelium_variable_features_plot.pdf")
+print(VariableFeaturePlot(name))
+plot1<-VariableFeaturePlot(name)
+print(LabelPoints(plot = plot1, points = top10, repel = TRUE))
+dev.off()
+s.genes <- cc.genes$s.genes
+g2m.genes <- cc.genes$g2m.genes
+name<-CellCycleScoring(name, s.features=s.genes, g2m.features=g2m.genes, set.ident=TRUE)
+name$CC.Difference <- name$S.Score - name$G2M.Score
+name <- ScaleData(name, vars.to.regress=c('CC.Difference'), features = VariableFeatures(name))
+epithelium<-name
+epithelium <- RunPCA(epithelium, features = VariableFeatures(name))
+pdf(file="epithelium_dimensions.pdf")
+print(epithelium[["pca"]], dims = 1:5, nfeatures = 5)
+VizDimLoadings(epithelium, dims = 1:2, reduction = "pca")
+#epithelium <- JackStraw(epithelium, num.replicate = 100)
+#epithelium <- ScoreJackStraw(epithelium, dims = 1:20)
+#JackStrawPlot(epithelium, dims = 1:15)
+ElbowPlot(epithelium)
+dev.off()
+epithelium<-RunHarmony(epithelium, group.by.vars='organism')
+epithelium <- FindNeighbors(epithelium, dims = 1:5, reduction='harmony')
+epithelium <- FindClusters(epithelium, resolution = 0.1)
+epithelium <- RunUMAP(epithelium, dims = 1:5, reduction="harmony")
+Idents(epithelium)<-epithelium$seurat_clusters
+saveRDS(epithelium, file = "humangenes_epithelium_only_numbered_clusters.rds")
+#https://www.nature.com/articles/s41467-022-32490-y.pdf
+#lhx6, tfap2b, msx1, runx2, mdk, sdc1 label dental epithelium
+#osr2 is strong in the dental epithelium
+#crym, egr3, fgf3 are dental papilla
+#lmo1 is coronal papilla at e16.5
+#fst is apical papilla at e16.5
+#lepr is lateral follicle
+#aldh1a2 is apical follicle
+#sox10 and dhh is schwann cell markers
+#acta2, cspg4, pdgfrb is perivascular cells
+#col1a1 is for bone development
+#Acan, Cilp, Prg4, Sox9, Col2a1 are for cartilage
+#NOG, BMP2, BMP7 marks meckel's in mouse
+pdf(file="humangenes_epithelium_standardmarkers_dotplot.pdf", height=18, width=18)
+standardmarkers<-c('EPCAM', 'IRF6', 'KRT6A', 'SHH', 'TGFB', 'TFAP2A', 'NEBL')
+DotPlot(epithelium, features=standardmarkers)
+dev.off()
+
+x<-levels(unique(Idents(epithelium)))
+f<-c()
+flw<-vector("list", length(x))
+background <- bitr(rownames(epithelium), fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Hs.eg.db")
+data2<-NULL
+for (val in x){
+print(val)
+flw[[val]]<-FindMarkers(epithelium, ident.1 = val, min.pct=0.10, logfc.threshold=0.1, max.cells.per.ident=400)
+y<-as.data.frame(flw[[val]])
+y<-y[which(y$p_val_adj <= 0.05 & y$avg_log2FC >= 0.5),]
+y<-y[order(-y$avg_log2FC),]
+value_bp <- enrichGO(gene = rownames(y), universe = background[,1], OrgDb = 'org.Hs.eg.db', keyType = 'SYMBOL', readable = F, ont = "BP", pvalueCutoff = 0.05, pAdjustMethod = "bonferroni")
+GO3<-clusterProfiler::simplify(value_bp)[]
+data<-as.data.frame(WhichCells(object=epithelium, ident=val))
+data[,2]<-GO3[1,2]
+data[,3]<-paste(rownames(y)[1],rownames(y)[2], rownames(y)[3], sep=', ')
+colnames(data)<-c("Cell", "GO", "HighestMarker")
+data2<-rbind(data2, data)
+}
+rownames(data2)<-data2[,1]
+epithelium<-AddMetaData(epithelium, metadata=data2)
+epithelium$Cell<-NULL
+saveRDS(epithelium, file = "humangenes_epithelium_only_numbered_clusters.rds")
+
+pdf(file="humangenes_epithelium_UMAP.pdf", height=12, width=12)
+print(VlnPlot(epithelium, features = c("nFeature_RNA"), pt.size = 0, group.by="stage"))
+print(VlnPlot(epithelium, features = c("nCount_RNA"), pt.size = 0, group.by="stage"))
+print(VlnPlot(epithelium, features = c("percent.mt"), pt.size = 0, group.by="stage"))
+DimPlot(epithelium, reduction = "umap", group.by = "HighestMarker") + theme(aspect.ratio = 1)
+DimPlot(epithelium, reduction = "umap", group.by="seurat_clusters") + theme(aspect.ratio = 1)
+DimPlot(epithelium, reduction = "umap", group.by = "GO") + theme(aspect.ratio = 1)
+DimPlot(epithelium, reduction = "umap", group.by = "organism") + theme(aspect.ratio = 1)
+FeaturePlot(epithelium, features = c('EBF3'), combine = TRUE, cols=c('lightgrey', 'blue'), split.by='organism')  + theme(aspect.ratio = 1)
+VlnPlot(epithelium, features = c('EBF3'), split.by='organism', log = TRUE, group.by="seurat_clusters") + theme(aspect.ratio = 1)
+dev.off()
+
+Idents(epithelium)<-epithelium$seurat_clusters
+epithelium<-RenameIdents(epithelium, `0`='epithelium_0', `2`='epithelium_2', `3`='epithelium_3', `4`='epithelium_4', `1`='epithelium_1', `5`='epithelium_5')
+
+
+standardmarkers<-c('TFAP2B', 'CNTN5', 'EYA4', 'NEBL', 'DLK1', 'DKK2')
+pdf(file="humangenes_epithelium_standardmarkers_dotplot_annotated.pdf", height=18, width=18)
+DotPlot(epithelium, features=standardmarkers)
+VlnPlot(epithelium, features=c('EBF3'), split.by='organism')
+VlnPlot(epithelium, features=standardmarkers, split.by='organism')
+dev.off()
+
+
+epithelium$Idents<-Idents(epithelium)
+
+pdf(file="epithelium_module_scores_HUBGENES.pdf", height=8.5, width=16)
+p<-DimPlot(epithelium, reduction = "umap", group.by="Idents") + theme(aspect.ratio = 1)
+nodes<-list.files(pattern="Nodes")
+for (node in nodes){
+g1<-read.table(file=node, sep=",", header=TRUE)
+g1<-g1[g1$HUB==1,]
+mod<-as.data.frame(g1$SYMID)
+colnames(mod)<-c("SYMID")
+mod<-intersect(mod$SYMID, rownames(epithelium))
+modulename<-gsub("_Nodes.csv", "", node)
+colorname<-gsub("1|2|3|4|5|6|7|8|9|0", "", modulename)
+epithelium<-AddModuleScore(object=epithelium, features=list(mod), bins=1, control=1000, name = modulename, seed = 1, search = TRUE, overwrite=TRUE)
+p<-DimPlot(epithelium, reduction = "umap", group.by="Idents", pt.size=2.5) + theme(aspect.ratio = 1)
+f<-FeaturePlot(epithelium, features =paste(modulename, "1", sep=""), cols=c('white', "blue")) + theme(aspect.ratio = 1) + labs(title = "") 
+g<-VlnPlot(epithelium, features =paste(modulename, "1", sep=""), slot = "counts", log = TRUE, group.by="Idents", pt.size = 0.05) + geom_boxplot(width=0.1,fill="white") + theme(aspect.ratio = 1) + labs(title = modulename) + geom_signif(comparisons = list(c("epithelium_0", "epithelium_1"), c("Neural Progenitor Cells", "epithelium_0"), c("epithelium_0", "epithelium_2"), c("epithelium_0", "epithelium_3"), c("epithelium_0", "epithelium_4"), c("epithelium_0", "epithelium_5", c("epithelium_0", "epithelium_6"))), map_signif_level = TRUE, textsize = 4, annotation="*")
+print((p | f | g)+ plot_annotation(modulename))
+assign(paste(modulename, "module", sep=""), mod)
+}
+dev.off()
+pdf(file="epithelium_module_scores_dotplot_HUBGENES.pdf", height=8.5, width=16)
+rm(modulename)
+allmods<-c('green1', 'lightyellow1', 'mediumpurple31', 'darkslateblue1', 'tan1')
+DotPlot(epithelium, features=allmods, group.by="Idents", cols=c('blue', "red")) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + labs(y="Cluster Classification", x="Gene Module from WGCNA")
+VlnPlot(epithelium, features=allmods, group.by="Idents", split.by='organism') + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + labs(y="Cluster Classification", x="Gene Module from WGCNA")
+dev.off()
+
+
+
+saveRDS(epithelium, file = "humangenes_epithelium_only_annotated.rds")
+
+mouse_face$Idents<-Idents(mouse_face)
+dat2<-data.frame(colnames(mesenchyme), mesenchyme$nums)
+dat3<-data.frame(colnames(mouse_face), Idents(mouse_face))
+colnames(dat2)<-c("Cell", 'Idents')
+colnames(dat3)<-c("Cell", 'Idents')
+dat3<-dat3[-which(dat3$Cell %in% c(dat2$Cell)),]
+dat<-rbind(dat2, dat3)
+mouse_face<-AddMetaData(mouse_face, metadata=dat)
+mouse_face$Cell<-NULL
+Idents(mouse_face)<-mouse_face$Idents
+saveRDS(mouse_face, file = "FINAL_mouse_face_with_rep_data_renamed_clusters.rds")
+
+
+pdf(file="EBF3_mesenchyme.pdf", height=36, width=18)
+a<-FeaturePlot(mesenchyme, features = c('EBF3'), combine = TRUE, cols=c('lightgrey', 'blue'), split.by='organism')  + theme(aspect.ratio = 1)
+d<-VlnPlot(mesenchyme, group.by='seurat_clusters', features = c('EBF3'), split.by='organism', log = TRUE, pt.size=0) + theme(aspect.ratio = 1)
+e<-VlnPlot(mesenchyme, features = c('EBF3'), split.by='organism', log = TRUE, pt.size=0) + theme(aspect.ratio = 1)
+print(a/(d|e))
+a<-FeaturePlot(mouse_face, features = c('EBF3'), combine = TRUE, cols=c('lightgrey', 'blue'), split.by='organism')  + theme(aspect.ratio = 1)
+d<-VlnPlot(mouse_face, group.by='seurat_clusters', features = c('EBF3'), split.by='organism', log = TRUE, pt.size=0) + theme(aspect.ratio = 1)
+e<-VlnPlot(mouse_face, features = c('EBF3'), split.by='organism', log = TRUE, pt.size=0) + theme(aspect.ratio = 1)
+print(a/(d|e))
+dev.off()
+pdf(file="EBF2_mesenchyme.pdf", height=36, width=18)
+a<-FeaturePlot(mesenchyme, features = c('EBF2'), combine = TRUE, cols=c('lightgrey', 'blue'), split.by='organism')  + theme(aspect.ratio = 1)
+d<-VlnPlot(mesenchyme, group.by='seurat_clusters', features = c('EBF2'), split.by='organism', log = TRUE, pt.size=0) + theme(aspect.ratio = 1)
+e<-VlnPlot(mesenchyme, features = c('EBF2'), split.by='organism', log = TRUE, pt.size=0) + theme(aspect.ratio = 1)
+print(a/(d|e))
+a<-FeaturePlot(mouse_face, features = c('EBF2'), combine = TRUE, cols=c('lightgrey', 'blue'), split.by='organism')  + theme(aspect.ratio = 1)
+d<-VlnPlot(mouse_face, group.by='seurat_clusters', features = c('EBF2'), split.by='organism', log = TRUE, pt.size=0) + theme(aspect.ratio = 1)
+e<-VlnPlot(mouse_face, features = c('EBF2'), split.by='organism', log = TRUE, pt.size=0) + theme(aspect.ratio = 1)
+print(a/(d|e))
+dev.off()
+
+pdf(file="BCL11A_mesenchyme.pdf", height=36, width=18)
+a<-FeaturePlot(mesenchyme, features = c('BCL11A'), combine = TRUE, cols=c('lightgrey', 'blue'), split.by='organism')  + theme(aspect.ratio = 1)
+d<-VlnPlot(mesenchyme, group.by='seurat_clusters', features = c('BCL11A'), split.by='organism', log = TRUE, pt.size=0) + theme(aspect.ratio = 1)
+e<-VlnPlot(mesenchyme, features = c('BCL11A'), split.by='organism', log = TRUE, pt.size=0) + theme(aspect.ratio = 1)
+print(a/(d|e))
+a<-FeaturePlot(mouse_face, features = c('BCL11A'), combine = TRUE, cols=c('lightgrey', 'blue'), split.by='organism')  + theme(aspect.ratio = 1)
+d<-VlnPlot(mouse_face, group.by='seurat_clusters', features = c('BCL11A'), split.by='organism', log = TRUE, pt.size=0) + theme(aspect.ratio = 1)
+e<-VlnPlot(mouse_face, features = c('BCL11A'), split.by='organism', log = TRUE, pt.size=0) + theme(aspect.ratio = 1)
+print(a/(d|e))
+dev.off()
+
+
+pdf(file="HMGA2_mesenchyme.pdf", height=36, width=18)
+a<-FeaturePlot(mesenchyme, features = c('HMGA2'), combine = TRUE, cols=c('lightgrey', 'blue'), split.by='organism')  + theme(aspect.ratio = 1)
+d<-VlnPlot(mesenchyme, group.by='seurat_clusters', features = c('HMGA2'), split.by='organism', log = TRUE, pt.size=0) + theme(aspect.ratio = 1)
+e<-VlnPlot(mesenchyme, features = c('HMGA2'), split.by='organism', log = TRUE, pt.size=0) + theme(aspect.ratio = 1)
+print(a/(d|e))
+a<-FeaturePlot(mouse_face, features = c('HMGA2'), combine = TRUE, cols=c('lightgrey', 'blue'), split.by='organism')  + theme(aspect.ratio = 1)
+d<-VlnPlot(mouse_face, group.by='seurat_clusters', features = c('HMGA2'), split.by='organism', log = TRUE, pt.size=0) + theme(aspect.ratio = 1)
+e<-VlnPlot(mouse_face, features = c('HMGA2'), split.by='organism', log = TRUE, pt.size=0) + theme(aspect.ratio = 1)
+print(a/(d|e))
+dev.off()
+
+pdf(file="IGF2BP1_mesenchyme.pdf", height=36, width=18)
+a<-FeaturePlot(mesenchyme, features = c('IGF2BP1'), combine = TRUE, cols=c('lightgrey', 'blue'), split.by='organism')  + theme(aspect.ratio = 1)
+d<-VlnPlot(mesenchyme, group.by='seurat_clusters', features = c('IGF2BP1'), split.by='organism', log = TRUE, pt.size=0) + theme(aspect.ratio = 1)
+e<-VlnPlot(mesenchyme, features = c('IGF2BP1'), split.by='organism', log = TRUE, pt.size=0) + theme(aspect.ratio = 1)
+print(a/(d|e))
+a<-FeaturePlot(mouse_face, features = c('IGF2BP1'), combine = TRUE, cols=c('lightgrey', 'blue'), split.by='organism')  + theme(aspect.ratio = 1)
+d<-VlnPlot(mouse_face, group.by='seurat_clusters', features = c('IGF2BP1'), split.by='organism', log = TRUE, pt.size=0) + theme(aspect.ratio = 1)
+e<-VlnPlot(mouse_face, features = c('IGF2BP1'), split.by='organism', log = TRUE, pt.size=0) + theme(aspect.ratio = 1)
+print(a/(d|e))
+dev.off()
+pdf(file="TWIST1_mesenchyme.pdf", height=36, width=18)
+a<-FeaturePlot(mesenchyme, features = c('TWIST1'), combine = TRUE, cols=c('lightgrey', 'blue'), split.by='organism')  + theme(aspect.ratio = 1)
+d<-VlnPlot(mesenchyme, group.by='seurat_clusters', features = c('TWIST1'), split.by='organism', log = TRUE, pt.size=0) + theme(aspect.ratio = 1)
+e<-VlnPlot(mesenchyme, features = c('TWIST1'), split.by='organism', log = TRUE, pt.size=0) + theme(aspect.ratio = 1)
+print(a/(d|e))
+a<-FeaturePlot(mouse_face, features = c('TWIST1'), combine = TRUE, cols=c('lightgrey', 'blue'), split.by='organism')  + theme(aspect.ratio = 1)
+d<-VlnPlot(mouse_face, group.by='seurat_clusters', features = c('TWIST1'), split.by='organism', log = TRUE, pt.size=0) + theme(aspect.ratio = 1)
+e<-VlnPlot(mouse_face, features = c('TWIST1'), split.by='organism', log = TRUE, pt.size=0) + theme(aspect.ratio = 1)
+print(a/(d|e))
+dev.off()
+
+x<-levels(unique(Idents(mouse_face)))
+f<-c()
+flw<-vector("list", length(x))
+background <- bitr(rownames(mouse_face), fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Mm.eg.db")
+data2<-NULL
+for (val in x){
+print(val)
+flw[[val]]<-FindMarkers(mouse_face, ident.1 = val, min.pct=0.10, logfc.threshold=0.1, max.cells.per.ident=400, test.use='DESeq2')
+y<-as.data.frame(flw[[val]])
+y<-y[which(y$p_val_adj <= 0.05 & y$avg_log2FC >= 0.5),]
+y<-y[order(-y$avg_log2FC),]
+assign(gsub(" |\\+", "", paste("clustermarkers", val, sep="")), flw[[val]])
+print("It's GO time")
+y2 <- bitr(rownames(y), fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Hs.eg.db")
+value_bp <- enrichGO(gene = y2$ENTREZID, universe = background$ENTREZID, OrgDb = org.Hs.eg.db, keyType = 'ENTREZID', readable = T, ont = "BP", qvalueCutoff = 0.05, pAdjustMethod = "bonferroni")
+load(file='~/cotney/one2one_ortho.Rdata') #stored as genesV2
+genes<-genesV2[which(genesV2$MGI.symbol %in% rownames(y)),4]
+human_dis <- bitr(genes, fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Hs.eg.db")
+print("It's DO time")
+value_cc <- enrichDGN(human_dis$ENTREZID)
+value_bp1<-clusterProfiler::simplify(value_bp, cutoff=0.75, by="qvalue")
+value_bp1<-as.data.frame(value_bp1)
+value_cc1<-as.data.frame(value_cc)
+data<-as.data.frame(WhichCells(object=mouse_face, ident=val))
+data[,2]<-value_bp1[1,2]
+data[,3]<-value_cc[1,2]
+data[,4]<-paste(rownames(y)[1],rownames(y)[2], rownames(y)[3], sep=', ')
+colnames(data)<-c("Cell", "GO", "ClinicalCorrelate", "HighestMarker")
+data2<-rbind(data2, data)
+}
+rownames(data2)<-data2[,1]
+mouse_face<-AddMetaData(mouse_face, metadata=data2)
+mouse_face$Cell<-NULL
+mouse_face$Idents<-Idents(mouse_face)
+
+standardmarkers<-c('RUNX2', 'ACTN2', 'NAV2', 'TP63', 'NEBL', 'HEMGN', 'CDH5', 'FCER1G')
+
+pdf(file="mouse_face_UMAP_annotated.pdf", height=8, width=18)
+DimPlot(mouse_face, reduction = "umap", group.by="Idents") + theme(aspect.ratio = 1)
+DimPlot(mouse_face, reduction = "umap", group.by="Phase") + theme(aspect.ratio = 1)
+DimPlot(mouse_face, reduction = "umap", group.by = "GO", cols=c("#636B59", "#CDE2B8", "#90A5A9", "#00A36C", "#00FFFF", "#228B22", "#7CFC00", "#0000FF", "#088F8F", "#0096FF", "#B4C424", "#C4B454", "#DFFF00", "#96DED1")) + theme(aspect.ratio = 1)
+DimPlot(mouse_face, reduction = "umap", group.by="orig.ident") + theme(aspect.ratio = 1)
+DimPlot(mouse_face, reduction = "umap", group.by="stage") + theme(aspect.ratio = 1)
+DimPlot(mouse_face, reduction = "umap", group.by="ClinicalCorrelate") + theme(aspect.ratio = 1)
+DimPlot(mouse_face, reduction = "umap", group.by="HighestMarker") + theme(aspect.ratio = 1)
+FeaturePlot(mouse_face, features=standardmarkers, raster=TRUE)
+DotPlot(mouse_face, features=standardmarkers, cols=c('lightgrey', 'blue'), assay='RNA', col.min=0, col.max=2)
+DotPlot(mouse_face, features=standardmarkers, group.by='seurat_clusters')
+dev.off()
+
+
+
+
+tr2g <- read_tsv("~/cotney/genome/hg38/kallisto_nucleus/hg38_nucleus_t2g.txt", col_names = c("transcript", "gene", "gene_symbol"))
+
+mouse_face.markers <- FindAllMarkers(mouse_face, only.pos = TRUE, test.use = "DESeq2", min.pct = 0.15, logfc.threshold=0.25, max.cells.per.ident=400)
+mouse_face.markers<-mouse_face.markers[which(mouse_face.markers$p_val_adj <= 0.05 & mouse_face.markers$avg_log2FC >= 0.25),]
+write.table(mouse_face.markers, file="MarkerGenes_AllClusters_Combined_CS17_E12.5.tsv", sep="\t", quote=F, row.names=F, col.names=T)
+saveRDS(mouse_face, file = "FINAL_mouse_face_with_rep_data_renamed_clusters.rds")
+
+
+
+
+human_face<-mouse_face
+
+system("scp -r /home/FCAM/ewentworth/cotney/analysis/scrna/human_multiome/manuscript_cs20/*Nodes* .")
+
+pdf(file="humangenes_module_scores_HUBGENES.pdf", height=8.5, width=16)
+p<-DimPlot(human_face, reduction = "umap", group.by="Idents") + theme(aspect.ratio = 1)
+nodes<-list.files(pattern="Nodes")
+for (node in nodes){
+g1<-read.table(file=node, sep=",", header=TRUE)
+g1<-g1[g1$HUB==1,]
+mod<-as.data.frame(g1$SYMID)
+colnames(mod)<-c("SYMID")
+mod<-intersect(mod$SYMID, rownames(human_face))
+modulename<-gsub("_Nodes.csv", "", node)
+colorname<-gsub("1|2|3|4|5|6|7|8|9|0", "", modulename)
+human_face<-AddModuleScore(object=human_face, features=list(mod), bins=1, control=1000, name = modulename, seed = 1, search = TRUE, overwrite=TRUE)
+p<-DimPlot(human_face, reduction = "umap", group.by="Idents", pt.size=2.5) + theme(aspect.ratio = 1)
+f<-FeaturePlot(human_face, features =paste(modulename, "1", sep=""), cols=c('white', "blue")) + theme(aspect.ratio = 1) + labs(title = "") 
+g<-VlnPlot(human_face, features =paste(modulename, "1", sep=""), slot = "data", log = TRUE, group.by="Idents", pt.size = 0) + geom_boxplot(width=0.1,fill="white") + theme(aspect.ratio = 1) + labs(title = modulename) + geom_signif(comparisons = list(c("Mesenchyme", "Epithelium"), c("Neural Progenitor Cells", "Mesenchyme"), c("Mesenchyme", "Endothelium"), c("Mesenchyme", "Glial Progenitor Cells"), c("Mesenchyme", "Blood Cells"), c("Mesenchyme", "Muscle Progenitor Cells", c("Mesenchyme", "Bone Progenitor Cells"), c("Mesenchyme", "Cartilage Progenitor Cells"))), map_signif_level = TRUE, textsize = 4, annotation="*")
+print((p | f | g)+ plot_annotation(modulename))
+assign(paste(modulename, "module", sep=""), mod)
+}
+dev.off()
+nodes<-list.files(pattern="Nodes")
+nodes<-gsub('_Nodes.csv', '', nodes)
+pdf(file="humangenes_module_scores_HUBGENES_dotplot.pdf", height=8.5, width=16)
+allmods<-paste0(unique(nodes), 1)
+DotPlot(human_face, features=allmods, group.by="Idents", cols=c('blue', "red")) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + labs(y="Cluster Classification", x="Gene Module from WGCNA")
+dev.off()
+
+
+ggsave("DotPlot_Hubgenes_forTara.eps", n, height=12, width=18)
+
+system("scp -r /home/FCAM/ewentworth/cotney/analysis/scrna/human_multiome/manuscript_cs20/*gini*txt .")
+
+
+pdf(file="ginigenes_module_scores.pdf", height=8.5, width=16)
+p<-DimPlot(human_face, reduction = "umap", group.by="Idents") + theme(aspect.ratio = 1)
+g1<-read.table(file="human_cf_gini_gene_list.txt", sep=",", header=FALSE)
+mod<-intersect(g1$V1, rownames(human_face))
+human_face<-AddModuleScore(object=human_face, features=list(mod), bins=1, control=1000, name = c('Gini'), seed = 1, search = TRUE, overwrite=TRUE)
+p<-DimPlot(human_face, reduction = "umap", group.by="Idents", pt.size=2.5, raster=TRUE) + theme(aspect.ratio = 1)
+f<-FeaturePlot(human_face, features ='Gini1', cols=c('white', "blue"), raster=TRUE) + theme(aspect.ratio = 1) + labs(title = "") 
+g<-VlnPlot(human_face, features ='Gini1', log = TRUE, group.by="Idents", pt.size = 0) + geom_boxplot(width=0.1,fill="white") + theme(aspect.ratio = 1) + labs(title = 'Gini Genes') + geom_signif(comparisons = list(c("Mesenchyme", "Epithelium"), c("Neural Progenitor Cells", "Mesenchyme"), c("Mesenchyme", "Endothelium"), c("Mesenchyme", "Glial Progenitor Cells"), c("Mesenchyme", "Blood Cells"), c("Mesenchyme", "Muscle Progenitor Cells", c("Mesenchyme", "Bone Progenitor Cells"), c("Mesenchyme", "Cartilage Progenitor Cells"))), map_signif_level = TRUE, textsize = 4, annotation="*")
+print((p | f | g)+ plot_annotation('Gini Genes'))
+DotPlot(human_face, features=mod, group.by="Idents", cols=c('blue', "red")) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + labs(y="Cluster Classification", x="Gini Genes") 
+DoHeatmap(human_face, features=mod)
+dev.off()
+
+
+
+
+Idents(mouse_face)<-mouse_face$seurat_clusters
+vals<-FindAllMarkers(mouse_face, min.pct=0.10, logfc.threshold=0.1, max.cells.per.ident=100)
+
+x<-levels(unique(mouse_face$seurat_clusters))
+f<-c()
+flw<-vector("list", length(x))
+background <- bitr(rownames(mouse_face), fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Hs.eg.db")
+data2<-NULL
+for (val in x){
+print(val)
+y<-vals[which(vals$cluster == val),]
+y<-y[which(y$p_val_adj <= 0.05 & y$avg_log2FC >= 0.25),]
+y2 <- bitr(y$gene, fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Hs.eg.db")
+value_bp <- enrichGO(gene = y2$ENTREZID, universe = background$ENTREZID, OrgDb = org.Hs.eg.db, keyType = 'ENTREZID', readable = T, ont = "BP", qvalueCutoff = 0.05, pAdjustMethod = "bonferroni")
+data<-rbind(head(value_bp, n=50))
+data$Cluster<-val
+data2<-rbind(data2, data)
+}
+write.table(data2, file='SupplementalTable8.txt', col.names=TRUE, row.names=FALSE, quote=FALSE, sep="\t")
+
+
+
+
+load('~/cotney/one2one_ortho.Rdata')
+human_face<-mouse_face
+pdf(file="humangenes_MOUSE_module_scores.pdf", height=8.5, width=16)
+p<-DimPlot(human_face, reduction = "umap", group.by="Idents") + theme(aspect.ratio = 1)
+nodes<-read.table(file='mus_modules_lognorm_genefiltered.txt', header=TRUE)
+for (node in unique(nodes[,3])){
+g1<-nodes[grep(node, nodes[,3]),]
+g1<-merge(g1, genesV2, by.x='gene_id', by.y='Gene.stable.ID')
+mod<-as.data.frame(g1$HGNC.symbol)
+colnames(mod)<-c("SYMID")
+mod<-intersect(mod$SYMID, rownames(human_face))
+modulename<-gsub("_Nodes.csv", "", node)
+colorname<-gsub("1|2|3|4|5|6|7|8|9|0", "", modulename)
+human_face<-AddModuleScore(object=human_face, features=list(mod), bins=1, control=1000, name = modulename, seed = 1, search = TRUE, overwrite=TRUE)
+p<-DimPlot(human_face, reduction = "umap", group.by="Idents", pt.size=2.5) + theme(aspect.ratio = 1)
+f<-FeaturePlot(human_face, features =paste(modulename, "1", sep=""), cols=c('white', "blue")) + theme(aspect.ratio = 1) + labs(title = "") 
+g<-VlnPlot(human_face, features =paste(modulename, "1", sep=""), slot = "data", log = TRUE, group.by="Idents", pt.size = 0) + geom_boxplot(width=0.1,fill="white") + theme(aspect.ratio = 1) + labs(title = modulename) + geom_signif(comparisons = list(c("Mesenchyme", "Epithelium"), c("Neural Progenitor Cells", "Mesenchyme"), c("Mesenchyme", "Endothelium"), c("Mesenchyme", "Glial Progenitor Cells"), c("Mesenchyme", "Blood Cells"), c("Mesenchyme", "Muscle Progenitor Cells", c("Mesenchyme", "Bone Progenitor Cells"), c("Mesenchyme", "Cartilage Progenitor Cells"))), map_signif_level = TRUE, textsize = 4, annotation="*")
+print((p | f | g)+ plot_annotation(modulename))
+assign(paste(modulename, "module", sep=""), mod)
+}
+dev.off()
+pdf(file="humangenes_MOUSE_module_scores_dotplot.pdf", height=8.5, width=16)
+rm(modulename)
+allmods<-paste0(unique(nodes[,3]), 1)
+DotPlot(human_face, features=allmods, group.by="Idents", cols=c('blue', "red")) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + labs(y="Cluster Classification", x="Gene Module from WGCNA")
+dev.off()
